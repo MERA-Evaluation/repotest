@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.package-data]
+repotest = ["constants.env"]
+
+[tool.setuptools.packages.find]
+where = [""]  # ["."] by default
+include = ["repotest*"]  # ["*"] by default
+
+[project]
+name = "repotest"
+version = "0.4.5"
+description = "A tool for cloning and testing repositories (docker or local, interface is the same)."
+authors = [
+    {name = "Pavel A", email = "padamenko@gmail.com"},
+]
+
+dependencies = [
+    "docker",
+    "gitpython",
+    "tenacity>=9.0.0",
+    "python-dotenv",
+    "colorama==0.4.6",
+    "tqdm==4.67.1",
+    "psutil",
+    "fire>=0.6.0",
+    "ipython==8.12.2", # bug fire & old ipython version
+    "coverage>=7.7.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "setuptools",
+    "pytest",
+    "build",
+    "pandas >= 2.0.0",
+    "pytest-json-report >= 1.5.0",
+    "python-dotenv"
+]
+
+[project.scripts]
+liveswebench = "repotest.cli.liveswebench:main_fire_entry_point"
