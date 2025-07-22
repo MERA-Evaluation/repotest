@@ -1,15 +1,14 @@
 import ast
 import glob
-import os
 import json
+import os
 from bisect import bisect_right
-from collections import defaultdict
-from typing import Dict, List, Set, Tuple, Optional, Any, Union
-from repotest.constants import REPOTEST_MAIN_FOLDER
+from functools import cached_property
+from typing import Any, Dict, List, Set, Tuple, Union
 
 import coverage
 import pandas as pd
-from functools import cached_property, lru_cache
+from repotest.constants import REPOTEST_MAIN_FOLDER
 
 
 class LineIndexMap:
@@ -50,7 +49,7 @@ class LineIndexMap:
         List[Any]
             List of data associated with intervals containing the line number.
         """
-        idx: int = bisect_right(self.intervals, (line_number, float('inf')))
+        idx: int = bisect_right(self.intervals, (line_number, float("inf")))
         result: List[Any] = []
 
         for i in range(idx - 1, -1, -1):
@@ -81,7 +80,7 @@ class ContextParser:
 
         with open(fn, "r") as file:
             source_code: str = file.read()
-            self.lines: List[str] = source_code.split('\n')
+            self.lines: List[str] = source_code.split("\n")
             try:
                 tree = ast.parse(source_code, filename=fn)
             except SyntaxError:
@@ -90,7 +89,9 @@ class ContextParser:
 
         self.dfs(tree)
 
-    def parse_node(self, node: Union[ast.FunctionDef, ast.ClassDef], intent_type: str) -> Dict[str, Any]:
+    def parse_node(
+        self, node: Union[ast.FunctionDef, ast.ClassDef], intent_type: str
+    ) -> Dict[str, Any]:
         """
         Parse a node into a structured dictionary.
 
@@ -107,38 +108,43 @@ class ContextParser:
             Structured representation of the node.
         """
         first_line = node.body[0]
-        if isinstance(first_line, ast.Expr) and isinstance(first_line.value, ast.Constant):
-            l = first_line.end_lineno
-            r = node.end_lineno
-            left_context = '\n'.join(self.lines[:l]) + '\n'
-            gt = '\n'.join(self.lines[l:r]) + '\n'
-            right_context = '\n'.join(self.lines[r:]) + '\n'
+        if isinstance(first_line, ast.Expr) and isinstance(
+            first_line.value, ast.Constant
+        ):
+            l = first_line.end_lineno  # noqa: E741
+            r = node.end_lineno  # noqa: E741
+            left_context = "\n".join(self.lines[:l]) + "\n"
+            gt = "\n".join(self.lines[l:r]) + "\n"
+            right_context = "\n".join(self.lines[r:]) + "\n"
             doc = ast.unparse(first_line)
         else:
-            l = 99999
-            if hasattr(first_line, "decorator_list") and len(first_line.decorator_list) > 0:
-                l = first_line.decorator_list[0].lineno
-            l = min(l, first_line.lineno - 1)
-            r = node.end_lineno
-            left_context = '\n'.join(self.lines[:l]) + '\n'
-            gt = '\n'.join(self.lines[l:r]) + '\n'
-            right_context = '\n'.join(self.lines[r:]) + '\n'
+            l = 99999.0  # noqa: E741
+            if (
+                hasattr(first_line, "decorator_list")
+                and len(first_line.decorator_list) > 0
+            ):
+                l = first_line.decorator_list[0].lineno  # noqa: E741
+            l = min(l, first_line.lineno - 1)  # noqa: E741
+            r = node.end_lineno  # noqa: E741
+            left_context = "\n".join(self.lines[:l]) + "\n"
+            gt = "\n".join(self.lines[l:r]) + "\n"
+            right_context = "\n".join(self.lines[r:]) + "\n"
             doc = None
 
         return {
-            'intent': f"{node.name}[{intent_type}]",
-            'intent_type': intent_type,
+            "intent": f"{node.name}[{intent_type}]",
+            "intent_type": intent_type,
             "intent_name": node.name,
             "l": l,
             "r": r,
             "left_context": left_context,
             "gt": gt,
             "right_context": right_context,
-            'doc': doc,
+            "doc": doc,
             "_node": node,
             "fn": self.fn,
             "source": f"{self.fn}:{node.name}[{intent_type}]",
-            "tests": set()
+            "tests": set(),
         }
 
     def dfs(self, ptr: ast.AST) -> None:
@@ -151,9 +157,9 @@ class ContextParser:
             The root AST node to begin traversal from.
         """
         if isinstance(ptr, ast.FunctionDef):
-            self.problems.append(self.parse_node(ptr, 'function'))
+            self.problems.append(self.parse_node(ptr, "function"))
         elif isinstance(ptr, ast.ClassDef):
-            self.problems.append(self.parse_node(ptr, 'class'))
+            self.problems.append(self.parse_node(ptr, "class"))
 
         for child in getattr(ptr, "body", []):
             if isinstance(child, (ast.FunctionDef, ast.ClassDef)):
@@ -176,7 +182,7 @@ class ContextParser:
         -------
         Dict[Tuple[int, int], Dict[str, Any]]
         """
-        return {(obj['l'], obj['r']): obj for obj in self.problems}
+        return {(obj["l"], obj["r"]): obj for obj in self.problems}
 
     def show(self, ind: int) -> None:
         """
@@ -189,11 +195,11 @@ class ContextParser:
         """
         for k, v in self[ind].items():
             if isinstance(v, int):
-                print(f'\t{k}={v}')
+                print(f"\t{k}={v}")
             else:
                 print(f"\t{k}")
                 print(v)
-                print('== === ' * 7)
+                print("== === " * 7)
 
 
 class TaskCollector:
@@ -201,11 +207,9 @@ class TaskCollector:
     Collect coverage data and map it to parsed code elements.
     """
 
-    def __init__(self, 
-                 folder: str, 
-                 mode: str='docker',
-                 drop_ast_column: bool = True
-                ) -> None:
+    def __init__(
+        self, folder: str, mode: str = "docker", drop_ast_column: bool = True
+    ) -> None:
         """
         Parameters
         ----------
@@ -216,11 +220,11 @@ class TaskCollector:
         self.mode = mode
         assert self.mode in ("local", "docker")
         self.drop_ast_column = drop_ast_column
-        
+
         self.folder: str = folder
         self.calculate_index()
         self.calculate_failed_passed_tests_set()
-    
+
     @cached_property
     def cov_data(self) -> coverage.CoverageData:
         """
@@ -261,51 +265,55 @@ class TaskCollector:
         for fn in self.python_file_list:
             file_index = ContextParser(fn).index_dict()
             for ptr in file_index.values():
-                ptr['_fn_inside_repo'] = ptr['fn']
-                ptr['fn'] = self.fn_to_docker_fn(ptr['fn'])
-            
+                ptr["_fn_inside_repo"] = ptr["fn"]
+                ptr["fn"] = self.fn_to_docker_fn(ptr["fn"])
+
             if file_index:
                 self.index[self.fn_to_docker_fn(fn)] = LineIndexMap(file_index)
-    
+
     def fn_to_docker_fn(self, fn):
-        #ToDo: fix this madnes. The problem that inside pytest .coverage file, fn = "/run_dir/some_file.py"
+        # ToDo: fix this madnes. The problem that inside pytest .coverage file, fn = "/run_dir/some_file.py"
         # really there is ~/.cache/repotest/runs/sf824jsdf/some_file.py
         # This bug cause when attach volume to /run_dir/ instead of using same folder
         # This increase spead at realcode/liveswebench tasks, but cause this error
-        if self.mode == 'docker':
-            _, fn_relative = fn[len(os.path.join(REPOTEST_MAIN_FOLDER, "runs/")):].split('/', 1)
+        if self.mode == "docker":
+            _, fn_relative = fn[
+                len(os.path.join(REPOTEST_MAIN_FOLDER, "runs/")) :
+            ].split("/", 1)
             fn = os.path.join("/run_dir/", fn_relative)
-        
+
         if fn.startswith("/home/paadamenko/"):
-            fn = "/data/adam/" + fn[len("/home/paadamenko/"):]
-        
+            fn = "/data/adam/" + fn[len("/home/paadamenko/") :]
+
         return fn
-    
+
     def run(self) -> None:
         """
         Enrich indexed problems with test coverage information.
         """
-        for _fn in self.python_file_list:            
+        for _fn in self.python_file_list:
             fn = self.fn_to_docker_fn(_fn)
             dict_lineno_test_list = self.cov_data.contexts_by_lineno(fn)
             if dict_lineno_test_list:
                 for line_num, test_list in dict_lineno_test_list.items():
-                    test_files = list(set(test.split('[')[0] for test in test_list if test))
+                    test_files = list(
+                        set(test.split("[")[0] for test in test_list if test)
+                    )
                     if test_files:
                         if fn in self.index:
                             for obj in self.index[fn](line_num):
                                 obj.setdefault("tests", set()).update(test_files)
 
     def compute_coverage(self, row):
-        #ToDo: think about how to manage this better
-        fn_inside_repo = self.fn_to_docker_fn(row['_fn_inside_repo'])
+        # ToDo: think about how to manage this better
+        fn_inside_repo = self.fn_to_docker_fn(row["_fn_inside_repo"])
         lines_covered = set(self.cov_data.lines(fn_inside_repo) or [])
-        total_lines = set(range(row['l'], row['r'] + 1))
+        total_lines = set(range(row["l"], row["r"] + 1))
         if not total_lines:
             return 0.0
         covered = total_lines & lines_covered
         return round(100 * len(covered) / len(total_lines), 2)
-    
+
     @cached_property
     def data(self) -> pd.DataFrame:
         """
@@ -320,24 +328,20 @@ class TaskCollector:
             for problem_dict in problem_obj.data.values():
                 data.append(problem_dict)
         data = pd.DataFrame(data)
-        assert data['tests'].apply(lambda x: isinstance(x, set)).all()
-        data['PASS_TO_PASS'] = data['tests'].apply(lambda x: 
-                                                   [t for i in x 
-                                                    if (t:=i.split('|')[0]) in self.passed_tests_set
-                                                   ]
-                                                  )
-        data['FAIL_TO_PASS'] = data['tests'].apply(lambda x: 
-                                                   [t for i in x 
-                                                    if (t:=i.split('|')[0]) in self.failed_tests_set
-                                                   ]
-                                                  )
+        assert data["tests"].apply(lambda x: isinstance(x, set)).all()
+        data["PASS_TO_PASS"] = data["tests"].apply(
+            lambda x: [t for i in x if (t := i.split("|")[0]) in self.passed_tests_set]
+        )
+        data["FAIL_TO_PASS"] = data["tests"].apply(
+            lambda x: [t for i in x if (t := i.split("|")[0]) in self.failed_tests_set]
+        )
         if self.drop_ast_column:
-            data.drop("_node", axis = 1, inplace = True)
-        
+            data.drop("_node", axis=1, inplace=True)
+
         data["coverage_rate"] = data.apply(self.compute_coverage, axis=1)
 
         return data
-    
+
     def calculate_failed_passed_tests_set(self) -> Tuple[Set[str], Set[str]]:
         """Extract sets of passed and failed test node IDs from pytest JSON report.
 
@@ -365,17 +369,17 @@ class TaskCollector:
         if not os.path.exists(fn_pytest_json):
             raise FileNotFoundError(f"Pytest JSON report not found: {fn_pytest_json}")
 
-        with open(fn_pytest_json, 'r', encoding='utf-8') as f:
+        with open(fn_pytest_json, "r", encoding="utf-8") as f:
             pytest_json = json.load(f)
 
         self.passed_tests_set: Set[str] = set()
         self.failed_tests_set: Set[str] = set()
 
-        for test_case in pytest_json.get('tests', []):
-            nodeid = test_case['nodeid']
-            outcome = test_case['outcome']
+        for test_case in pytest_json.get("tests", []):
+            nodeid = test_case["nodeid"]
+            outcome = test_case["outcome"]
 
-            if outcome == 'passed':
+            if outcome == "passed":
                 if nodeid in self.passed_tests_set:
                     raise AssertionError(f"Duplicate passed test: {nodeid}")
                 self.passed_tests_set.add(nodeid)
@@ -387,9 +391,9 @@ class TaskCollector:
         if self.passed_tests_set & self.failed_tests_set:
             raise AssertionError("Some tests appear in both passed and failed sets")
 
-
     def validate(self):
-        assert self.data['source'].nunique() == self.data.shape[0]
+        assert self.data["source"].nunique() == self.data.shape[0]
+
 
 # # ## Example of ussage
 # repo = PythonLocalRepo(repo = "mlizzi/slack-progress-bar",

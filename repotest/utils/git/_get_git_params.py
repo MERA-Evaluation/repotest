@@ -1,9 +1,8 @@
 import os
 import subprocess
-from tqdm import tqdm
+
 # ToDo: read this from consts
 # Define the cache folder path
-from repotest.constants import DEFAULT_CACHE_FOLDER
 
 
 def get_git_commit_hash(folder):
@@ -31,9 +30,10 @@ def get_git_commit_hash(folder):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        check=True
+        check=True,
     )
     return result.stdout.strip()
+
 
 def get_commit_url(folder):
     """
@@ -60,9 +60,10 @@ def get_commit_url(folder):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        check=True
+        check=True,
     )
     return result.stdout.strip()
+
 
 def detect_java_test_command(folder):
     """
@@ -89,6 +90,7 @@ def detect_java_test_command(folder):
         return "cd java; mvn test"
     else:
         raise ValueError("No 'pom.xml' file found to determine the test command.")
+
 
 def java_parse_repo_metadata(repo_path, repo_name):
     """
@@ -118,16 +120,17 @@ def java_parse_repo_metadata(repo_path, repo_name):
     """
     commit_hash = get_git_commit_hash(repo_path)
     commit_url = get_commit_url(repo_path)
-    instance_id = repo_name.replace('/', '-')
+    instance_id = repo_name.replace("/", "-")
     command = detect_java_test_command(repo_path)
-    
+
     return {
         "instance_id": instance_id,
         "repo_name": repo_name,
         "commit_hash": commit_hash,
         "command": command,
-        "_url": commit_url
+        "_url": commit_url,
     }
+
 
 # Example of ussage
 # List of repository names (should be defined or passed as input)

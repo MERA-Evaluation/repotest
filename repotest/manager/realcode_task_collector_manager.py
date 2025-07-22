@@ -1,13 +1,12 @@
-from tqdm import tqdm
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from repotest.constants import OPTIMAL_CPU_NUM
 from repotest.core.docker.python import PythonDockerRepo
 from repotest.core.local.python import PythonLocalRepo
-from repotest.constants import OPTIMAL_CPU_NUM
 from repotest.parsers.python.collect_task import TaskCollector
-from repotest.core.exceptions import GitException
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import os
-import json
+from tqdm import tqdm
+
 
 class RealcodeTaskCollectorManager:
     """
@@ -20,57 +19,57 @@ class RealcodeTaskCollectorManager:
     n_jobs : int, optional
         Number of parallel jobs, by default 1.
     gen_columns : list of str, optional
-        Columns containing generated test results, by default 
+        Columns containing generated test results, by default
         ['test_gt', 'test_pass', 'test_return_empty_str', 'test_gen'].
     raise_exception : bool, optional
         Whether to raise exceptions or suppress them, by default True.
     """
-    
+
     build_success_status = {}
-    
-    def __init__(self,
-                 mode='docker',
-                 n_jobs=OPTIMAL_CPU_NUM,
-                 gen_columns=['gt', 'pass', 'return_empty_str', "gen"],
-                 raise_exception=True,
-                 n_jobs_build=OPTIMAL_CPU_NUM,
-                 timeout=300
-                ):
-        assert mode in ('docker', 'local')
-        if mode == 'docker':
+
+    def __init__(
+        self,
+        mode="docker",
+        n_jobs=OPTIMAL_CPU_NUM,
+        gen_columns=["gt", "pass", "return_empty_str", "gen"],
+        raise_exception=True,
+        n_jobs_build=OPTIMAL_CPU_NUM,
+        timeout=300,
+    ):
+        assert mode in ("docker", "local")
+        if mode == "docker":
             self.RepoClass = PythonDockerRepo
-        elif mode == 'local':
+        elif mode == "local":
             self.RepoClass = PythonLocalRepo
-        
+
         self.mode = mode
         self.n_jobs = n_jobs
         self.n_jobs_build = n_jobs_build
-        
+
         self.gen_columns = gen_columns
         self.raise_exception = raise_exception
         self.timeout = timeout
-    
+
     @staticmethod
     def extract_test(report_json):
-        list_of_tests = report_json.get('report', {}).get('tests', {})
+        list_of_tests = report_json.get("report", {}).get("tests", {})
         passed = set()
         failed = set()
         was = set()
         for d in list_of_tests:
-            test_name = d['nodeid']
+            test_name = d["nodeid"]
             assert test_name not in was
             was.add(test_name)
-            if d['outcome'] == 'passed':
+            if d["outcome"] == "passed":
                 passed.add(test_name)
             else:
                 failed.add(test_name)
         return passed, failed
 
-    
     def get_passed_dict(self, task):
         passed, failed = self.extract_test(task["test_dry_run"])
         res = {}
-        res['pass_dry_run'] = int(len(passed) > 0)
+        res["pass_dry_run"] = int(len(passed) > 0)
         for key in self.gen_columns:
             if (key in task) or (key == "gen"):
                 passed_current, failed_current = self.extract_test(task["test_" + key])
@@ -79,45 +78,51 @@ class RealcodeTaskCollectorManager:
         return res
 
     def eval_single(self, task):
-        task['status'] = 0
-        
+        task["status"] = 0
+
         try:
-            repo = self.RepoClass(repo=task['repo'],
-                                  base_commit=task['base_commit'],
-                                  **({"image_name": task['image_name']} if self.mode=='docker' else {})
-                                 ) 
+            repo = self.RepoClass(
+                repo=task["repo"],
+                base_commit=task["base_commit"],
+                **({"image_name": task["image_name"]} if self.mode == "docker" else {}),
+            )
         except Exception as e:
-            print(task['repo'], ' moved', e)
+            print(task["repo"], " moved", e)
             raise e
-                
+
         repo.clean()
-        command_build_and_test = task['command_build'] + \
-                         (';\n' if task['command_build'][-1] != ';' else '\n' ) + \
-                             task['command_test']
-        
-        task['command_build_and_test'] = command_build_and_test
-        dct_build_and_test = repo.run_test(command_build_and_test, 
-                                       timeout=self.timeout
-                                      )
-        task['dct_build_and_test'] = json.dumps(dct_build_and_test)
-        
+        command_build_and_test = (
+            task["command_build"]
+            + (";\n" if task["command_build"][-1] != ";" else "\n")
+            + task["command_test"]
+        )
+
+        task["command_build_and_test"] = command_build_and_test
+        dct_build_and_test = repo.run_test(command_build_and_test, timeout=self.timeout)
+        task["dct_build_and_test"] = json.dumps(dct_build_and_test)
+
         collector = TaskCollector(repo.cache_folder, mode=self.mode)
         df_problems = collector.data
-        n_good_candidates = ((df_problems['PASS_TO_PASS'].apply(len)>0) &\
-                             df_problems['doc'].notna() & \
-                             (df_problems['intent_type'] == 'function')
-                            ).sum()
-        
-        print("Collected %s %s %d/%d"%(task['repo'], task['base_commit'], 
-                                       n_good_candidates, len(df_problems)
-                                      )
-             )
-        df_problems['tests']        = df_problems['tests'].apply(lambda x: json.dumps(list(x)))
-        df_problems['PASS_TO_PASS'] = df_problems['PASS_TO_PASS'].apply(lambda x: json.dumps(list(x)))
-        df_problems['FAIL_TO_PASS'] = df_problems['FAIL_TO_PASS'].apply(lambda x: json.dumps(list(x)))
-        task['problems'] = json.dumps(list(df_problems.T.to_dict().values()))
-        
-        task['status'] = 1
+        n_good_candidates = (
+            (df_problems["PASS_TO_PASS"].apply(len) > 0)
+            & df_problems["doc"].notna()
+            & (df_problems["intent_type"] == "function")
+        ).sum()
+
+        print(
+            "Collected %s %s %d/%d"
+            % (task["repo"], task["base_commit"], n_good_candidates, len(df_problems))
+        )
+        df_problems["tests"] = df_problems["tests"].apply(lambda x: json.dumps(list(x)))
+        df_problems["PASS_TO_PASS"] = df_problems["PASS_TO_PASS"].apply(
+            lambda x: json.dumps(list(x))
+        )
+        df_problems["FAIL_TO_PASS"] = df_problems["FAIL_TO_PASS"].apply(
+            lambda x: json.dumps(list(x))
+        )
+        task["problems"] = json.dumps(list(df_problems.T.to_dict().values()))
+
+        task["status"] = 1
 
     def collect_task_single(self, task_list):
         for task in tqdm(task_list):
@@ -126,22 +131,23 @@ class RealcodeTaskCollectorManager:
             except Exception as e:
                 if self.raise_exception:
                     raise e
-    
+
     def collect_task_parallel(self, task_list):
         with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
             futures = [executor.submit(self.eval_single, task) for task in task_list]
             for _ in tqdm(as_completed(futures), total=len(futures)):
                 pass  # We don't need the result since it's in-place
-        
+
     def collect_task_list(self, task_list):
         if self.n_jobs == 1:
             self.collect_task_single(task_list)
         else:
             self.collect_task_parallel(task_list)
-    
+
     def inplace_collect(self, task_list):
         self.collect_task_list(task_list)
-        
+
+
 # # Example of ussage
 # task_list = [{'repo': 'mzaja/betfair-database',
 #   'base_commit': '7759d5337b780d3007c37d62421ffe5490dc4a26',

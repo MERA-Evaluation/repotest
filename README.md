@@ -11,22 +11,12 @@ Originally built to facilitate LLM generation testing at the repository level, a
 
 # Installation
 
-If you're running on an ECS GigaCode worker, please run:
-
-```bash
-ln -s /data/adam/.cache/repotest ~/.cache/repotest
-```
-
-This is necessary due to limited disk space.
-
 1. Install the latest version using pip:
 
 ```bash
-pip install dist/$(ls dist/repotest-*.whl | sort -V | tail -n 1)
+pip install repositorytest
 ```
 
-This command installs the latest available version of the package.
-It's equivalent to `pip install dist/repotest-0.2.6-py3-none-any.whl`, but always picks the latest version.
 
 2. To run the project in debug mode, add the current folder to the Python path:
 

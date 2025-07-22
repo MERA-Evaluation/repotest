@@ -1,12 +1,16 @@
-import re
 import logging
-logger = logging.getLogger("repotest") 
+import re
+
+logger = logging.getLogger("repotest")
+
 
 def extract_assertion_errors(idx, line, lines, errors):
-    method_name_pattern = r'\.([a-zA-Z_][a-zA-Z0-9_]*)\('
-    assertion_error_pattern = 'AssertionFailedError:'
+    method_name_pattern = r"\.([a-zA-Z_][a-zA-Z0-9_]*)\("
+    assertion_error_pattern = "AssertionFailedError:"
     if assertion_error_pattern in line:
-        rest_of_line = line[line.find(assertion_error_pattern) + len(assertion_error_pattern):]
+        rest_of_line = line[
+            line.find(assertion_error_pattern) + len(assertion_error_pattern) :
+        ]
         method_name = None
         if idx < len(lines) - 1:
             next_line = lines[idx + 1]
@@ -18,10 +22,12 @@ def extract_assertion_errors(idx, line, lines, errors):
 
 
 def extract_runtime_errors(idx, line, lines, errors):
-    method_name_pattern = r'\.([a-zA-Z_][a-zA-Z0-9_]*)\('
-    runtime_error_pattern = 'Exception:'
+    method_name_pattern = r"\.([a-zA-Z_][a-zA-Z0-9_]*)\("
+    runtime_error_pattern = "Exception:"
     if runtime_error_pattern in line and line.startswith("java."):
-        rest_of_line = line[line.find(runtime_error_pattern) + len(runtime_error_pattern):]
+        rest_of_line = line[
+            line.find(runtime_error_pattern) + len(runtime_error_pattern) :
+        ]
         method_name = None
         if idx < len(lines) - 1:
             next_line = lines[idx + 1]
@@ -33,7 +39,7 @@ def extract_runtime_errors(idx, line, lines, errors):
 
 
 def extract_compile_errors(full_path, idx, line, lines, errors):
-    error_type_pattern = r'\[\d+,\d+\]\s+(.+)'
+    error_type_pattern = r"\[\d+,\d+\]\s+(.+)"
     if full_path in line and line.startswith("[ERROR]"):
         match = re.search(error_type_pattern, line)
         error_type = "unknown"
@@ -49,16 +55,16 @@ def extract_compile_errors(full_path, idx, line, lines, errors):
         errors.append({"type": error_type, "details": details})
 
 
-def analyze_maven_stdout(stdout, full_path, collect_errors = False):
-    #ToDo: collect errors = True => compile_rate = compile_rate / 5
-    error_type_pattern = r'\[\d+,\d+\]\s+(.+)'
+def analyze_maven_stdout(stdout, full_path, collect_errors=False):
+    # ToDo: collect errors = True => compile_rate = compile_rate / 5
+    error_type_pattern = r"\[\d+,\d+\]\s+(.+)"
     if isinstance(stdout, bytes):
         lines = stdout.decode("utf-8").split("\n")
     elif isinstance(stdout, str):
-        lines = stdout.split('\n')
+        lines = stdout.split("\n")
     else:
         raise ValueError("Unknown type of stdout")
-    
+
     result = {"success": False, "tests": 0, "compiled": False, "errors": []}
     last_error = None
     assertion_errors = []
@@ -85,15 +91,19 @@ def analyze_maven_stdout(stdout, full_path, collect_errors = False):
                 elif "cannot find symbol" in error_type:
                     error_type = "symbol_not_found"
                 elif "class, interface, enum" in error_type:
-                    error_type = "class_interface_enum (repeatance of package declaration)"
+                    error_type = (
+                        "class_interface_enum (repeatance of package declaration)"
+                    )
                 elif "should be declared in a file named" in error_type:
                     error_type = "file_name"
                     logger.warning("File name error:")
                     logger.warning(full_path)
                     logger.warning(line)
 
-                elif ("reached end of file while parsing" in error_type
-                      or "unclosed string literal" in error_type):
+                elif (
+                    "reached end of file while parsing" in error_type
+                    or "unclosed string literal" in error_type
+                ):
                     error_type = "end_of_file"
                 elif "cannot be instantiated" in error_type:
                     error_type = "cannot_instantiate_abstract_class"
@@ -103,14 +113,14 @@ def analyze_maven_stdout(stdout, full_path, collect_errors = False):
                     error_type = "semicolon_expected"
                 else:
                     # error_type = "other"
-                    logger.error("Unknown error type: %s"%error_type)
+                    logger.error("Unknown error type: %s" % error_type)
                     logger.error(line)
                 last_error = {
                     "type": error_type,
                     "full_text": line,
                 }
 
-        elif last_error:
+        if last_error:
             last_error["message"] = line
             last_error["full_text"] += "\n" + line
             result["errors"].append(last_error)

@@ -1,8 +1,11 @@
 import re
-from typing import Dict, Any
+from typing import Any, Dict
+
+
 def parse_single(s: str) -> int:
     """Extracts integer from a string like '3 failed'."""
     return int(s.split(" ")[0])
+
 
 def parse_pytest_stdout(s: str) -> Dict[str, Any]:
     """Parses pytest stdout into a structured JSON format."""
@@ -22,7 +25,9 @@ def parse_pytest_stdout(s: str) -> Dict[str, Any]:
         res["summary_raw"] = "\n".join(s.split("\n")[-n_spaces:])
 
     # Extract test results using regex
-    test_result_pattern = re.compile(r"(FAILED|PASSED|SKIPPED|ERROR|XFAIL|XPASS)\s+([\w/_.:]+)")
+    test_result_pattern = re.compile(
+        r"(FAILED|PASSED|SKIPPED|ERROR|XFAIL|XPASS)\s+([\w/_.:]+)"
+    )
     failure_details_pattern = re.compile(r"_{10,}\s+(.*?)\s+_{10,}", re.DOTALL)
 
     for line in s.split("\n"):
@@ -37,7 +42,15 @@ def parse_pytest_stdout(s: str) -> Dict[str, Any]:
         res["failures"] = failure_matches
 
     # Extract summary statistics
-    for key in ["passed", "error", "failed", "warning", "skipped", "xfailed", "xpassed"]:
+    for key in [
+        "passed",
+        "error",
+        "failed",
+        "warning",
+        "skipped",
+        "xfailed",
+        "xpassed",
+    ]:
         ptrn = r"\d+ %s" % key
         lst = re.findall(ptrn, s)
         if key in NO_DUPLICATES_SET:

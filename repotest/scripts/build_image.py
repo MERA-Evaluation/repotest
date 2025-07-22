@@ -1,16 +1,19 @@
 """
-    Temp logic to build custom images
+Temp logic to build custom images
 
-    This script is used to build a custom Docker image for a specific application.
-    It takes the name of the image as an argument and builds the image using the Dockerfile
-    in the corresponding folder.
+This script is used to build a custom Docker image for a specific application.
+It takes the name of the image as an argument and builds the image using the Dockerfile
+in the corresponding folder.
 
 """
-import docker
+
 import logging
 from pathlib import Path
 
+import docker
+
 logger = logging.getLogger("repotest")
+
 
 def build_image(image_folder):
     # Initialize Docker client
@@ -21,8 +24,12 @@ def build_image(image_folder):
     print(path)
     # Define the image name
 
-    print(f"image_folder = {image_folder} Building Docker image '{image_folder}' from '{path}'...")
-    logger.info(f"image_folder = {image_folder} Building Docker image '{image_folder}' from '{path}'...")
+    print(
+        f"image_folder = {image_folder} Building Docker image '{image_folder}' from '{path}'..."
+    )
+    logger.info(
+        f"image_folder = {image_folder} Building Docker image '{image_folder}' from '{path}'..."
+    )
     # Build the Docker image
     image, build_logs = client.images.build(path=path, tag=image_folder)
 
@@ -32,4 +39,3 @@ def build_image(image_folder):
             logger.info(log["stream"].strip())
 
     print(f"Image '{image_folder}' built successfully!")
-

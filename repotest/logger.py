@@ -1,10 +1,12 @@
 import logging
 import os
 from datetime import datetime
-from repotest.constants import LOG_LEVEL_FILE, LOG_LEVEL_CONSOLE, REPOTEST_MAIN_FOLDER
+
+from repotest.constants import (LOG_LEVEL_CONSOLE, LOG_LEVEL_FILE,
+                                REPOTEST_MAIN_FOLDER)
 
 # Determine logger name dynamically from the package path
-LOGGER_NAME = __name__.split('.')[0]  # Gets 'repotest'
+LOGGER_NAME = __name__.split(".")[0]  # Gets 'repotest'
 
 # Logging directory
 LOG_DIR = os.path.join(REPOTEST_MAIN_FOLDER, "logs")
@@ -41,8 +43,10 @@ if not logger.hasHandlers():
     logger.addHandler(file_handler)
 
 logger.info("Logger initialized: %s", log_filepath)
-logger.info("LOG_LEVEL_FILE=%s"%LOG_LEVEL_FILE)
-logger.info("LOG_LEVEL_CONSOLE=%s"%LOG_LEVEL_CONSOLE)
+logger.info("LOG_LEVEL_FILE=%s" % LOG_LEVEL_FILE)
+logger.info("LOG_LEVEL_CONSOLE=%s" % LOG_LEVEL_CONSOLE)
+
+
 # Function to change console log level
 def change_console_logger_level(level: int) -> None:
     """
@@ -58,6 +62,7 @@ def change_console_logger_level(level: int) -> None:
             handler.setLevel(level)
             logger.info("Console log level changed to: %s", logging.getLevelName(level))
             break
+
 
 # Function to change file log level
 def change_file_logger_level(level: int) -> None:

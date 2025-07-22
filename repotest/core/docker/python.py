@@ -4,18 +4,13 @@ import os
 import time
 from enum import Enum, auto
 from functools import cached_property
-from typing import Dict, Optional, Literal
+from typing import Dict, Literal, Optional
 
-import docker
-from docker.errors import DockerException, APIError, ImageNotFound
-
+from docker.errors import APIError, ImageNotFound
+from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
+                                DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT,
+                                DOCKER_PYTHON_DEFAULT_IMAGE)
 from repotest.core.docker.base import AbstractDockerRepo
-from repotest.constants import (
-    DEFAULT_EVAL_TIMEOUT_INT,
-    DEFAULT_BUILD_TIMEOUT_INT,
-    DEFAULT_CACHE_FOLDER,
-    DOCKER_PYTHON_DEFAULT_IMAGE,
-)
 from repotest.core.exceptions import TimeOutException
 from repotest.parsers.python.pytest_stdout import parse_pytest_stdout
 
@@ -49,7 +44,7 @@ class PythonDockerRepo(AbstractDockerRepo):
             image_name=image_name,
             cache_mode=cache_mode,
         )
-    
+
     # @cached_property
     # def container_name(self):
     #     return self.default_container_name + "-" + self.run_id
@@ -62,7 +57,7 @@ class PythonDockerRepo(AbstractDockerRepo):
     def _local_pip_cache(self) -> str:
         return os.path.join(self.cache_folder, ".pip_cache")
 
-    def _setup_container_volumes(self, workdir = None) -> Dict[str, Dict[str, str]]:
+    def _setup_container_volumes(self, workdir=None) -> Dict[str, Dict[str, str]]:
         """Configure volume mounts based on cache mode."""
         volumes = {}
         if workdir:
@@ -71,23 +66,28 @@ class PythonDockerRepo(AbstractDockerRepo):
         if self.cache_mode == "shared":
             volumes[self._user_pip_cache] = {"bind": self._user_pip_cache, "mode": "rw"}
         elif self.cache_mode == "local":
-            volumes[self._local_pip_cache] = {"bind": self._local_pip_cache, "mode": "rw"}
-        elif self.cache_mode == 'volume':
-            self.create_volume('pip-cache')
+            volumes[self._local_pip_cache] = {
+                "bind": self._local_pip_cache,
+                "mode": "rw",
+            }
+        elif self.cache_mode == "volume":
+            self.create_volume("pip-cache")
             logger.debug("cache_mode=volume")
-            volumes["pip-cache"] = {'bind': "/root/.cache/pip", 'mode': 'rw'}
-        
+            volumes["pip-cache"] = {"bind": "/root/.cache/pip", "mode": "rw"}
+
         return volumes
 
     def build_env(
-        self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT,
-        commit_image = True,
-        stop_container = True,
-        push_image = False
+        self,
+        command: str,
+        timeout: int = DEFAULT_BUILD_TIMEOUT_INT,
+        commit_image=True,
+        stop_container=True,
+        push_image=False,
     ) -> Dict[str, object]:
         """Build the environment inside the Docker container."""
         self.container_name = self.default_container_name
-        volumes = self._setup_container_volumes(workdir='/run_dir') #build_dir')
+        volumes = self._setup_container_volumes(workdir="/run_dir")  # build_dir')
 
         logger.info(
             "Starting container",
@@ -102,7 +102,7 @@ class PythonDockerRepo(AbstractDockerRepo):
             image_name=self.image_name,
             container_name=self.container_name,
             volumes=volumes,
-            working_dir='/run_dir' #build_dir'
+            working_dir="/run_dir",  # build_dir'
         )
         command = "ulimit -n 65535;\n" + command
         try:
@@ -119,13 +119,13 @@ class PythonDockerRepo(AbstractDockerRepo):
 
         if self._FALL_WITH_TIMEOUT_EXCEPTION:
             raise TimeOutException(f"Command '{command}' timed out after {timeout}s.")
-        
+
         if commit_image:
             self._commit_container_image()
-        
+
         if push_image:
             self.push_image()
-        
+
         if stop_container:
             self.stop_container()
 
@@ -195,7 +195,7 @@ ulimit -n 65535;
         self,
         command: str = "pytest tests",
         timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
-        stop_container: bool = True
+        stop_container: bool = True,
     ) -> Dict[str, object]:
         """Run tests inside the Docker container."""
         volumes = self._setup_container_volumes(workdir="/run_dir")
@@ -203,7 +203,7 @@ ulimit -n 65535;
             image_name=self.image_name,
             container_name=self.container_name,
             volumes=volumes,
-            working_dir="/run_dir"
+            working_dir="/run_dir",
         )
 
         command = self._mock_path(command)
@@ -235,12 +235,13 @@ ulimit -n 65535;
 
     def _format_results(self, pytest_json: Optional[Dict] = None) -> Dict[str, object]:
         """Format results into a consistent dictionary structure."""
-        return {"stdout": self.stdout,
-                "stderr": self.stderr,
-                "std": self.std,
-                "returncode": self.return_code,
-                "parser": parse_pytest_stdout(self.stdout),
-                "report": pytest_json or {},
-                "time": self.evaluation_time,
-                "run_id": self.run_id,
-            }
+        return {
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "std": self.std,
+            "returncode": self.return_code,
+            "parser": parse_pytest_stdout(self.stdout),
+            "report": pytest_json or {},
+            "time": self.evaluation_time,
+            "run_id": self.run_id,
+        }

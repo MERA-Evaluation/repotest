@@ -13,11 +13,25 @@ where = [""]  # ["."] by default
 include = ["repotest*"]  # ["*"] by default
 
 [project]
-name = "repotest"
-version = "0.4.5"
+name = "repositorytest"
+version = "0.5.0"
+license = "MIT"
 description = "A tool for cloning and testing repositories (docker or local, interface is the same)."
+readme = "README.md"
 authors = [
-    {name = "Pavel A", email = "padamenko@gmail.com"},
+    {name = "Pavel Adamenko", email = "padamenko@gmail.com"},
+]
+requires-python = ">=3.6"
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 
 dependencies = [
@@ -33,6 +47,11 @@ dependencies = [
     "coverage>=7.7.0"
 ]
 
+[project.urls]
+"Homepage" = "https://github.com/MERA-Evaluation/repotest"
+"Bug Tracker" = "https://github.com/MERA-Evaluation/repotest/issues"
+
+
 [project.optional-dependencies]
 dev = [
     "setuptools",
@@ -45,3 +64,23 @@ dev = [
 
 [project.scripts]
 liveswebench = "repotest.cli.liveswebench:main_fire_entry_point"
+swemera = "repotest.cli.liveswebench:main_fire_entry_point"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: mark test as integration test",
+    "slow: mark test as slow running test",
+]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]

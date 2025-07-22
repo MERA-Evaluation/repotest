@@ -1,16 +1,15 @@
 import os
 import subprocess
-from repotest.core.base import AbstractRepo
-from repotest.constants import DEFAULT_EVAL_TIMEOUT_INT
-from repotest.parsers.java.maven_stdout import analyze_maven_stdout
-from repotest.parsers.java.jacoco_report import parse_jacoco_report
-from repotest.parsers.java.surefire_report import (
-    find_test_reports,
-    parse_xml_test_report,
-    group_test_cases_by_status,
-    )
 
-class JavaLocalRepo(AbstractRepo):
+from repotest.constants import DEFAULT_EVAL_TIMEOUT_INT
+from repotest.core.local.base import AbstractLocalRepo
+from repotest.parsers.java.maven_stdout import analyze_maven_stdout
+from repotest.parsers.java.surefire_report import (find_test_reports,
+                                                   group_test_cases_by_status,
+                                                   parse_xml_test_report)
+
+
+class JavaLocalRepo(AbstractLocalRepo):
     """
     A class for managing and testing local Java repositories.
 
@@ -19,16 +18,12 @@ class JavaLocalRepo(AbstractRepo):
     test_timeout : int
         Maximum time (in seconds) to wait for test execution (default is 60 seconds).
     """
-    def build_env(self, 
-                  command: str,
-                  timeout: int = DEFAULT_EVAL_TIMEOUT_INT
-                 ) -> None:
-        self.run_test(command=command,
-                      timeout=timeout
-                     )
+
+    def build_env(self, command: str, timeout: int = DEFAULT_EVAL_TIMEOUT_INT) -> None:
+        self.run_test(command=command, timeout=timeout)
         pass
 
-    def run_test(self, command = 'mvn test', timeout = DEFAULT_EVAL_TIMEOUT_INT):
+    def run_test(self, command="mvn test", timeout=DEFAULT_EVAL_TIMEOUT_INT):
         """
         Run tests in the Java repository using Maven.
 
@@ -39,10 +34,10 @@ class JavaLocalRepo(AbstractRepo):
             - 'stdout': str, standard output from the test execution.
             - 'stderr': str, standard error from the test execution.
             - 'returncode': int, the return code from the Maven process.
-        
+
         Notes
         -----
-        The method detects the location of the `pom.xml` file and runs the tests 
+        The method detects the location of the `pom.xml` file and runs the tests
         from the appropriate directory. If the Maven command succeeds (return code 0),
         it prints a success message. Otherwise, it prints a failure message.
         """
@@ -51,7 +46,7 @@ class JavaLocalRepo(AbstractRepo):
         # Determine the working directory for Maven
 
         # Run the Maven test command
-        #ToDo: use base_class Popen
+        # ToDo: use base_class Popen
         process = subprocess.Popen(
             command,
             shell=True,
@@ -59,19 +54,18 @@ class JavaLocalRepo(AbstractRepo):
             stderr=subprocess.PIPE,
             cwd=self.cache_folder,
         )
-        
-        stdout, stderr = '', ''
+
+        stdout, stderr = "", ""
         try:
             stdout, stderr = process.communicate(timeout=timeout)
-            stdout = stdout.decode("utf-8", errors = "replace") if stdout else ""
-            stderr = stderr.decode("utf-8", errors = "replace") if stderr else ""
+            stdout = stdout.decode("utf-8", errors="replace") if stdout else ""
+            stderr = stderr.decode("utf-8", errors="replace") if stderr else ""
         except subprocess.TimeoutExpired:
             process.kill()
             stderr += f"\nTest execution timed out after {timeout} seconds."
-        
+
         returncode = process.returncode
         print(f"Process return code: {returncode}")
-
 
         report = []
         test_reports_paths = find_test_reports(self.cache_folder)
@@ -79,18 +73,18 @@ class JavaLocalRepo(AbstractRepo):
             testsuite = parse_xml_test_report(report_path)
             entry = group_test_cases_by_status(testsuite)
             report.append(entry)
-        
+
         # Prepare the result dictionary
         result = {
-            'stdout': stdout,
-            'stderr': stderr,
-            'returncode': returncode,
-            "parser": analyze_maven_stdout(stdout=stdout, 
-                                           full_path=self.default_cache_folder
-                                           ),
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": returncode,
+            "parser": analyze_maven_stdout(
+                stdout=stdout, full_path=self.default_cache_folder
+            ),
             # "time": self.evaluation_time,
-            "parser_xml": report # ToDo: rename parser_xml -> report
-            }
+            "parser_xml": report,  # ToDo: rename parser_xml -> report
+        }
 
         # Log success or failure
         if returncode == 0:
@@ -105,29 +99,31 @@ class JavaLocalRepo(AbstractRepo):
 
         return result
 
-    def run_jacoco(self, maven_path: str = "mvn", timeout = DEFAULT_EVAL_TIMEOUT_INT) -> str:
+    def add_m2_to_gitignore(self):
+        # ToDo: refactor this logic is not clear
+        # Idea to have .mw folder at every repo level
+        # But if we don't want to download it we also print this to gitignore
+        # This affect clean(), but not affect hard_clean()
+        fn = os.path.join(self.cache_folder, ".gitignore")
+        if os.path.exists(fn):
+            txt_gitignore = open(fn, "r").read()
+            if "\n.m2\n" not in txt_gitignore:
+                with open(fn, "a") as f:
+                    f.write("\n.m2\n")
+        else:
+            with open(fn, "w+") as f:
+                f.write("\n.m2\n")
+
+    def run_jacoco(
+        self, maven_path: str = "mvn", timeout=DEFAULT_EVAL_TIMEOUT_INT
+    ) -> str:
         """
         Runs Jacoco to generate coverage report.
         """
-        result = self.subprocess_popen(command = maven_path + " jacoco:prepare-agent test jacoco:report -Dmaven.test.failure.ignore=true",
-                                       timeout = timeout
-                                      )
-        coverage_dir = os.path.join(self.cache_folder, "target/site/jacoco")
-        return coverage_dir
-        # try:
-        #     cmd = maven_path + " jacoco:prepare-agent test jacoco:report -Dmaven.test.failure.ignore=true"
-
-        #     p = subprocess.Popen(
-        #         cmd,
-        #         shell=True,
-        #         cwd=self.cache_folder,
-        #         stdout=subprocess.PIPE,
-        #         stderr=subprocess.PIPE,
-        #     )
-        #     stdout, stderr = p.communicate(timeout=timeout)
-        #     if p.returncode != 0:
-        #         return None
-        # except Exception as e:
-        #     return None
-        # coverage_dir = os.path.join(self.cache_folder, "target/site/jacoco")
-        # return coverage_dir
+        result = self.subprocess_popen(
+            command=maven_path
+            + " jacoco:prepare-agent test jacoco:report -Dmaven.test.failure.ignore=true",
+            timeout=timeout,
+        )
+        result["coverage_dir"] = os.path.join(self.cache_folder, "target/site/jacoco")
+        return result

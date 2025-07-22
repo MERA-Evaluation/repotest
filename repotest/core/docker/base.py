@@ -1,24 +1,27 @@
-import os
-from abc import ABC, abstractmethod
-
-import docker
-from docker.errors import DockerException, NotFound, APIError
-from repotest.core.base import AbstractRepo
-from repotest.core.exceptions import DockerStartContainerFailed, TimeOutException
-# from repotest.utils.timeout import  timeout_decorator, TimeOutException
-from repotest.constants import DEFAULT_EVAL_TIMEOUT_INT, DEFAULT_BUILD_TIMEOUT_INT, DEFAULT_CACHE_FOLDER, \
-                              DOCKER_IMAGE_PREFIX, DOCKER_CONTAINER_PREFIX, DEFAULT_CONTAINER_MEM_LIMIT, \
-                              DOCKER_REGISTRY_URI, S3_BUCKET, DEFAULT_COMMIT_TIMEOUT_INT
-
-from git import GitCommandError
-from tenacity import retry, stop_after_attempt, wait_chain, wait_fixed
-
-from functools import cached_property
-import logging
 import concurrent.futures
+import logging
+import os
+from abc import abstractmethod
+from functools import cached_property
 from typing import List
 
-logger = logging.getLogger("repotest") 
+import docker
+from docker.errors import APIError, NotFound
+from git import GitCommandError
+# from repotest.utils.timeout import  timeout_decorator, TimeOutException
+from repotest.constants import (DEFAULT_CACHE_FOLDER,
+                                DEFAULT_COMMIT_TIMEOUT_INT,
+                                DEFAULT_CONTAINER_MEM_LIMIT,
+                                DEFAULT_EVAL_TIMEOUT_INT,
+                                DOCKER_CONTAINER_PREFIX, DOCKER_IMAGE_PREFIX,
+                                DOCKER_REGISTRY_URI)
+from repotest.core.base import AbstractRepo
+from repotest.core.exceptions import (DockerStartContainerFailed,
+                                      TimeOutException)
+from tenacity import retry, stop_after_attempt, wait_chain, wait_fixed
+
+logger = logging.getLogger("repotest")
+
 
 class AbstractDockerRepo(AbstractRepo):
     """
@@ -29,18 +32,20 @@ class AbstractDockerRepo(AbstractRepo):
     test_timeout : int
         Maximum time (in seconds) to wait for test execution (default is 60 seconds).
     """
+
     _TEST_EVAL_TIMEOUT = DEFAULT_EVAL_TIMEOUT_INT
     MEM_LIMIT = DEFAULT_CONTAINER_MEM_LIMIT
     _FALL_WITH_TIMEOUT_EXCEPTION = False
 
-    def __init__(self, 
-                 repo: str, 
-                 base_commit: str,
-                 default_cache_folder: str = DEFAULT_CACHE_FOLDER, 
-                 default_url: str = 'http://github.com',
-                 image_name: str = "maven:3.9.9-eclipse-temurin-23-alpine",
-                 cache_mode: str = "local"
-                 ):
+    def __init__(
+        self,
+        repo: str,
+        base_commit: str,
+        default_cache_folder: str = DEFAULT_CACHE_FOLDER,
+        default_url: str = "http://github.com",
+        image_name: str = "maven:3.9.9-eclipse-temurin-23-alpine",
+        cache_mode: str = "local",
+    ):
         """
         Initializes the Docker repository manager.
 
@@ -63,79 +68,87 @@ class AbstractDockerRepo(AbstractRepo):
             repo=repo,
             base_commit=base_commit,
             default_cache_folder=default_cache_folder,
-            default_url=default_url
+            default_url=default_url,
         )
 
         self.image_name = image_name
         assert cache_mode in ("download", "shared", "local", "volume", "build")
         self.cache_mode = cache_mode
         self.docker_client
-    
+
     def change_mem_limit(self, mem_limit: str) -> None:
         """Change memory limit in container"""
-        assert mem_limit.endswith("g") or mem_limit.endswith("G"), "Memory limit must be specified in GB"
+        assert mem_limit.endswith("g") or mem_limit.endswith(
+            "G"
+        ), "Memory limit must be specified in GB"
         assert int(mem_limit[:-1]) > 0, "Memory limit must be greater than 0"
         self.MEM_LIMIT = mem_limit
 
     @property
     def default_image_name(self) -> str:
         return DOCKER_IMAGE_PREFIX + self.instance_id
-    
+
     @property
     def default_container_name(self) -> str:
         return DOCKER_CONTAINER_PREFIX + self.instance_id
-    
+
     @cached_property
     def container_name(self):
         return self.default_container_name + "-" + self.run_id
-    
+
     @cached_property
     def docker_client(self):
-        #ToDo: In case of strange errors like that:
+        # ToDo: In case of strange errors like that:
         # ReadTimeout: UnixHTTPConnectionPool(host='localhost', port=None): Read timed out. (read timeout=60)
         # delete timeout here
-        return docker.from_env(timeout = DEFAULT_COMMIT_TIMEOUT_INT)
-    
+        return docker.from_env(timeout=DEFAULT_COMMIT_TIMEOUT_INT)
+
     @cached_property
     def RANDDOM_CONTAINER_CPUSER_CPUS(self):
-        #ToDo: handle case 1 repo = 1,2,3 cpu
-        #ToDo: handle case task1_cpu != task2_cpu
+        # ToDo: handle case 1 repo = 1,2,3 cpu
+        # ToDo: handle case task1_cpu != task2_cpu
 
-        import random
         import os
+        import random
+
         # Get total available CPU cores
         TOTAL_CPUS = os.cpu_count()  # or manually set (e.g., TOTAL_CPUS = 64)
 
         # Assign 1 random CPU per container
         DEFAULT_CONTAINER_CPUSET_CPUS = str(random.randint(0, TOTAL_CPUS - 1))
         # Debug this
-        logger.debug("DEFAULT_CONTAINER_CPUSET_CPUS id=%s : %s"%(id(self), DEFAULT_CONTAINER_CPUSET_CPUS))
-        #print(id(self), "DEFAULT_CONTAINER_CPUSET_CPUS", DEFAULT_CONTAINER_CPUSET_CPUS)
+        logger.debug(
+            "DEFAULT_CONTAINER_CPUSET_CPUS id=%s : %s"
+            % (id(self), DEFAULT_CONTAINER_CPUSET_CPUS)
+        )
+        # print(id(self), "DEFAULT_CONTAINER_CPUSET_CPUS", DEFAULT_CONTAINER_CPUSET_CPUS)
         return DEFAULT_CONTAINER_CPUSET_CPUS
-    
+
     @retry(
         stop=stop_after_attempt(2),  # Retry 2 times
         wait=wait_chain(
             wait_fixed(1),  # First retry after 1s
-            wait_fixed(3)   # Second retry after 3s
-        )
+            wait_fixed(3),  # Second retry after 3s
+        ),
     )
-    def start_container(self, 
-                     image_name, 
-                     container_name,
-                     volumes = {},
-                     detach=True,
-                     stdin_open=True, # Keep stdin open for interaction
-                     tty=True,
-                     command="/bin/bash",  # Start a shell session initially
-                     remove=True,
-                     working_dir=None
-                     ):
+    def start_container(
+        self,
+        image_name,
+        container_name,
+        volumes={},
+        detach=True,
+        stdin_open=True,  # Keep stdin open for interaction
+        tty=True,
+        command="/bin/bash",  # Start a shell session initially
+        remove=True,
+        working_dir=None,
+    ):
         try:
             if self.cache_folder not in volumes:
                 raise ValueError(f"{self.cache_folder} should be at volumes")
 
-            logger.debug(f"""self.container = self.docker_client.containers.run(image={image_name},
+            logger.debug(
+                f"""self.container = self.docker_client.containers.run(image={image_name},
                                                                name={container_name},
                                                                detach={detach},
                                                                stdin_open={stdin_open}, # Keep stdin open for interaction
@@ -147,40 +160,45 @@ class AbstractDockerRepo(AbstractRepo):
                                                                mem_limit={self.MEM_LIMIT},  # Limit container memory to 10GB
                                                                environment="PIP_ROOT_USER_ACTION": "ignore",
                                                                cpus={self.RANDDOM_CONTAINER_CPUSER_CPUS}                     
-                                                              )""")
-            
+                                                              )"""
+            )
+
             logger.info("Start container at workdir: %s", working_dir)
-            self.container = self.docker_client.containers.run(image=image_name,
-                                                               name=container_name,
-                                                               detach=detach,
-                                                               stdin_open=stdin_open, # Keep stdin open for interaction
-                                                               tty=tty,
-                                                               volumes=volumes,
-                                                               working_dir=working_dir,
-                                                               command=command,  # Start a shell session initially
-                                                               remove=remove,
-                                                               mem_limit=self.MEM_LIMIT,  # Limit container memory to 10GB
-                                                               environment={"PIP_ROOT_USER_ACTION": "ignore",
-                                                                             "PYTHON_SAVE_JSON_REPORT": "1",
-                                                                             "PYTHONUNBUFFERED": "1"
-                                                                           },
-                                                               cpuset_cpus=self.RANDDOM_CONTAINER_CPUSER_CPUS
-                                                              )
+            self.container = self.docker_client.containers.run(
+                image=image_name,
+                name=container_name,
+                detach=detach,
+                stdin_open=stdin_open,  # Keep stdin open for interaction
+                tty=tty,
+                volumes=volumes,
+                working_dir=working_dir,
+                command=command,  # Start a shell session initially
+                remove=remove,
+                mem_limit=self.MEM_LIMIT,  # Limit container memory to 10GB
+                environment={
+                    "PIP_ROOT_USER_ACTION": "ignore",
+                    "PYTHON_SAVE_JSON_REPORT": "1",
+                    "PYTHONUNBUFFERED": "1",
+                },
+                cpuset_cpus=self.RANDDOM_CONTAINER_CPUSER_CPUS,
+            )
         except APIError as e:
             logger.warning("start_container fail")
-            raise DockerStartContainerFailed(f"Failed to start Docker container: {self} {e}")
+            raise DockerStartContainerFailed(
+                f"Failed to start Docker container: {self} {e}"
+            )
         except Exception as e:
             logger.critical("Don't forget to add this error to try except")
             logger.critical(e)
             raise e
         return
-    
+
     def delete_image_if_exist(self):
         try:
             # Check if the image exists
             image = self.docker_client.images.get(self.image_name)
             logger.debug(f"Image '{self.image_name}' found. Deleting...")
-        
+
             # Remove the image
             self.docker_client.images.remove(image.id, force=True)
             logger.debug(f"Image '{self.image_name}' deleted successfully.")
@@ -195,25 +213,27 @@ class AbstractDockerRepo(AbstractRepo):
             logger.critical(e, exc_info=True)
             raise e
 
-    def stop_container(self, timeout = 0):
+    def stop_container(self, timeout=0):
         logger.debug("Stopping container")
         logger.debug(self.container.status)
         try:
             # if self.container.status != "running":
-            logger.debug(f"Trying to stop container: {self.container.name} (waiting {timeout} before force stop)")
-            self.container.stop(timeout = timeout)
+            logger.debug(
+                f"Trying to stop container: {self.container.name} (waiting {timeout} before force stop)"
+            )
+            self.container.stop(timeout=timeout)
             logger.debug(f"Container stopped: {self.container.name}")
         except NotFound as e:
-            logger.info("Container not found %s"%(self.container.name))
+            logger.info("Container not found %s" % (self.container.name))
             logger.critical(e, exc_info=True)
-    
+
     def _convert_std_from_bytes_to_str(self):
-        for key in ['stdout', 'stderr', 'std']:
+        for key in ["stdout", "stderr", "std"]:
             if hasattr(self, key):
                 if isinstance(getattr(self, key), bytes):
                     s = self._bytes_to_string(getattr(self, key))
                     setattr(self, key, s)
-    
+
     @classmethod
     def _bytes_to_string(cls, b):
         try:
@@ -221,26 +241,24 @@ class AbstractDockerRepo(AbstractRepo):
         except UnicodeDecodeError:
             return str(b)
         except Exception as e:
-            #ToDo change this, when Exception type will be more precise
+            # ToDo change this, when Exception type will be more precise
             raise e
-    
+
     def timeout_exec_run(self, command, timeout):
         """
         Execute a command inside a Docker container with a timeout.
         """
+
         def _run_command():
             logger.debug(f"Executing command in Docker container: {command}")
-            
-            _, self.last_stream = self.container.exec_run(command, 
-                                                        stream=True, 
-                                                        tty=False, 
-                                                        stdout=True, 
-                                                        stderr=True, 
-                                                        demux=True)
+
+            _, self.last_stream = self.container.exec_run(
+                command, stream=True, tty=False, stdout=True, stderr=True, demux=True
+            )
             self.return_code = 0
-            self.stdout = b''
-            self.stderr = b''
-            self.std = b''
+            self.stdout = b""
+            self.stderr = b""
+            self.std = b""
 
             for stdout, stderr in self.last_stream:
                 if stdout:
@@ -264,8 +282,9 @@ class AbstractDockerRepo(AbstractRepo):
                 logger.error(f"Command execution timed out after {timeout} seconds.")
                 if hasattr(self, "stop_container"):
                     self.stop_container()
-                raise TimeOutException(f"Command execution(docker) timed out after {timeout} seconds.") from e
-
+                raise TimeOutException(
+                    f"Command execution(docker) timed out after {timeout} seconds."
+                ) from e
 
     # @timeout_decorator()
     # def timeout_exec_run_old(self, command):
@@ -273,12 +292,12 @@ class AbstractDockerRepo(AbstractRepo):
     #     Execute a command inside a Docker container.
     #     """
     #     logger.debug(f"Executing command in Docker container: {command}")
-        
-    #     _, self.last_stream = self.container.exec_run(command, 
-    #                                                   stream = True, 
-    #                                                   tty=False, 
-    #                                                   stdout=True, 
-    #                                                   stderr=True, 
+
+    #     _, self.last_stream = self.container.exec_run(command,
+    #                                                   stream = True,
+    #                                                   tty=False,
+    #                                                   stdout=True,
+    #                                                   stderr=True,
     #                                                   demux=True
     #                                                  )
     #     self.return_code = 0
@@ -286,7 +305,6 @@ class AbstractDockerRepo(AbstractRepo):
     #     self.stderr = b''
     #     self.std = b''
 
-        
     #     for stdout, stderr in self.last_stream:
     #         if stdout:
     #             logger.debug(self._bytes_to_string(stdout))
@@ -299,9 +317,7 @@ class AbstractDockerRepo(AbstractRepo):
     #             self.stderr += stderr
     #             self.std += stderr
     #     return
-    
-    
-    
+
     def create_volume(self, volume_name):
         try:
             volume = self.docker_client.volumes.get(volume_name)
@@ -325,7 +341,7 @@ class AbstractDockerRepo(AbstractRepo):
     #             self.container.stop(timeout = timeout)
     #     except docker.errors.NotFound:
     #         logger.warning(f"{self.container} not found.")
-    
+
     def clean(self):
         try:
             super().clean()
@@ -335,39 +351,43 @@ class AbstractDockerRepo(AbstractRepo):
             # Execute the Docker command to fix the "dubious ownership" issue and clean the repository
             # docker run --entrypoint sh -v $(pwd):/git --rm alpine/git -c "git config --global --add safe.directory /git && git clean -fd"
             self.docker_client.containers.run(
-                "alpine/git", # Image
-                "-c 'git config --global --add safe.directory /git && git clean -fd'", # Command to execute
-                entrypoint='sh',
+                "alpine/git",  # Image
+                "-c 'git config --global --add safe.directory /git && git clean -fd'",  # Command to execute
+                entrypoint="sh",
                 name=f"{DOCKER_CONTAINER_PREFIX}-alpine-git-{self.run_id}",
-                volumes={f"{self.cache_folder}": {'bind': '/git', 'mode': 'rw'}}, # Bind mount current directory to /git inside container
-                remove=True  # Automatically remove container after it finishes
+                volumes={
+                    f"{self.cache_folder}": {"bind": "/git", "mode": "rw"}
+                },  # Bind mount current directory to /git inside container
+                remove=True,  # Automatically remove container after it finishes
             )
-    
+
     def hard_clean(self):
-        #ToDo: check that this work
+        # ToDo: check that this work
         try:
             super().clean()
         except GitCommandError:
             logger.error("Fail to clean, using alpine/git to clean it")
             self.docker_client.containers.run(
-                "alpine/git", # Image
-                "-c 'git config --global --add safe.directory /git && git clean --hard && git clean -fdx'", # Command to execute
-                entrypoint='sh',
+                "alpine/git",  # Image
+                "-c 'git config --global --add safe.directory /git && git clean --hard && git clean -fdx'",  # Command to execute
+                entrypoint="sh",
                 name=f"{DOCKER_CONTAINER_PREFIX}-alpine-git-{self.run_id}",
-                volumes={f"{self.cache_folder}": {'bind': '/git', 'mode': 'rw'}}, # Bind mount current directory to /git inside container
-                remove=True  # Automatically remove container after it finishes
+                volumes={
+                    f"{self.cache_folder}": {"bind": "/git", "mode": "rw"}
+                },  # Bind mount current directory to /git inside container
+                remove=True,  # Automatically remove container after it finishes
             )
-    
+
     def save_artifacts(self):
         pass
 
-    def push_image(self, target_tag='latest'):
+    def push_image(self, target_tag="latest"):
         # Tag the image
         try:
             source_image = self.default_image_name
             image = self.docker_client.images.get(source_image)
             target_repo = os.path.join(DOCKER_REGISTRY_URI, self.instance_id)
-            target_image = f'{target_repo}:{target_tag}'
+            target_image = f"{target_repo}:{target_tag}"
             image.tag(target_repo, tag=target_tag)
             logger.info(f"Successfully tagged {source_image} as {target_image}")
         except docker.errors.ImageNotFound as e:
@@ -376,23 +396,20 @@ class AbstractDockerRepo(AbstractRepo):
         except docker.errors.APIError as e:
             logger.critical(f"Error tagging image: {e}")
             raise e
-        
+
         try:
             push_logs = self.docker_client.images.push(
-                repository=target_repo,
-                tag=target_tag,
-                stream=True,
-                decode=True
+                repository=target_repo, tag=target_tag, stream=True, decode=True
             )
-            
+
             # Print push progress
             for log in push_logs:
-                if 'status' in log:
-                    logger.info(log['status'])
-                if 'error' in log:
+                if "status" in log:
+                    logger.info(log["status"])
+                if "error" in log:
                     logger.info(f"Error: {log['error']}")
                     break
-                    
+
             logger.info(f"Successfully pushed {target_image}")
         except docker.errors.APIError as e:
             logger.info(f"Error pushing image: {e}")
@@ -403,7 +420,7 @@ class AbstractDockerRepo(AbstractRepo):
     @abstractmethod
     def build_env(self, command):
         pass
-    
+
     @abstractmethod
     def run_test(self, command):
         pass
@@ -431,10 +448,12 @@ class AbstractDockerRepo(AbstractRepo):
                 command=command,
                 name=f"{DOCKER_CONTAINER_PREFIX}-alpine-del-{self.run_id}",
                 remove=True,  # Automatically remove the container after execution
-                volumes={self.cache_folder: {'bind': self.cache_folder, 'mode': 'rw'}},
+                volumes={self.cache_folder: {"bind": self.cache_folder, "mode": "rw"}},
             )
 
-            logger.debug(f"Successfully removed repository cache folder: {self.cache_folder}")
+            logger.debug(
+                f"Successfully removed repository cache folder: {self.cache_folder}"
+            )
         except Exception as e:
             logger.error(f"Failed to clean up with Alpine container: {e}")
 
@@ -453,7 +472,7 @@ class AbstractDockerRepo(AbstractRepo):
                 cmds.append(cmd)
 
             command = " & ".join(cmds)
-            
+
             paths_txt = ", ".join(dir_paths)
             logger.debug(f"Starting Alpine container to delete: {paths_txt}")
 
@@ -462,7 +481,7 @@ class AbstractDockerRepo(AbstractRepo):
                 command=command,
                 name=f"{DOCKER_CONTAINER_PREFIX}-alpine-clean_dirs-{self.run_id}",
                 remove=True,  # Automatically remove the container after execution
-                volumes={self.cache_folder: {'bind': self.cache_folder, 'mode': 'rw'}},
+                volumes={self.cache_folder: {"bind": self.cache_folder, "mode": "rw"}},
             )
             logger.debug(f"Successfully removed dirs: {paths_txt}")
             return True

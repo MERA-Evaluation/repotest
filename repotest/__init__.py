@@ -1,3 +1,4 @@
 from repotest.logger import logger
-__version__ = "0.4.5"
+
+__version__ = "0.5.0"
 logger.info("RepoTest initialised")

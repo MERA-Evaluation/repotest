@@ -1,12 +1,13 @@
-from tqdm import tqdm
 import json
-from repotest.core.docker.python import PythonDockerRepo
-from repotest.core.local.python import PythonLocalRepo
-from repotest.core.exceptions import GitException
-from repotest.constants import OPTIMAL_CPU_NUM
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Union
-import os
+from typing import Dict, List, Union
+
+from repotest.constants import OPTIMAL_CPU_NUM
+from repotest.core.docker.python import PythonDockerRepo
+from repotest.core.exceptions import GitException
+from repotest.core.local.python import PythonLocalRepo
+from tqdm import tqdm
+
 
 class LiveSWEBenchTaskManager:
     """
@@ -33,45 +34,48 @@ class LiveSWEBenchTaskManager:
         Class used to handle repositories (either Docker or Local).
     """
 
-    REQUIRED_COLUMND = ["instance_id", "repo", 
-                        "base_commit", 
-                        "image_name",
-                        "test_patch", 
-                        "command_test_small",
-                        "timeout_build",
-                        "timeout_test"
-                       ]
+    REQUIRED_COLUMND = [
+        "instance_id",
+        "repo",
+        "base_commit",
+        "image_name",
+        "test_patch",
+        "command_test_small",
+        "timeout_build",
+        "timeout_test",
+    ]
     time_scale_factor: int = 1
 
     def __init__(
         self,
-        column_patch = 'patch_model',
-        mode: str = 'docker',
+        column_patch="patch_model",
+        mode: str = "docker",
         n_jobs: int = OPTIMAL_CPU_NUM,
         raise_exception: bool = True,
         verbose_all: bool = False,
-        time_scale_factor = 'auto'
+        time_scale_factor="auto",
     ):
-        assert mode in ('docker', 'local')
-        if mode == 'docker':
+        assert mode in ("docker", "local")
+        if mode == "docker":
             self.RepoClass = PythonDockerRepo
         else:
             self.RepoClass = PythonLocalRepo
 
         self.mode = mode
         self.n_jobs = n_jobs
-        if time_scale_factor == 'auto':
+        if time_scale_factor == "auto":
             self.time_scale_factor = self.n_jobs
         else:
             self.time_scale_factor = max(1, self.n_jobs / OPTIMAL_CPU_NUM)
-        
+
         self.raise_exception = raise_exception
         self.column_patch = column_patch
-        
+
         if verbose_all:
             from repotest.constants import enable_stdout_logs
+
             enable_stdout_logs()
-    
+
     @staticmethod
     def extract_test(test_result: dict) -> tuple[set, set]:
         """
@@ -89,16 +93,16 @@ class LiveSWEBenchTaskManager:
         failed : set
             Set of test names that failed.
         """
-        list_of_tests = test_result.get('report', {}).get('tests', {})
+        list_of_tests = test_result.get("report", {}).get("tests", {})
         passed = set()
         failed = set()
         was = set()
 
         for d in list_of_tests:
-            test_name = d['nodeid']
+            test_name = d["nodeid"]
             assert test_name not in was
             was.add(test_name)
-            if d['outcome'] == 'passed':
+            if d["outcome"] == "passed":
                 passed.add(test_name)
             else:
                 failed.add(test_name)
@@ -116,40 +120,40 @@ class LiveSWEBenchTaskManager:
         """
         try:
             repo = self.RepoClass(
-                repo=task['repo'],
-                base_commit=task['base_commit'],
-                **({"image_name": task['image_name']} if self.mode == 'docker' else {})
+                repo=task["repo"],
+                base_commit=task["base_commit"],
+                **({"image_name": task["image_name"]} if self.mode == "docker" else {}),
             )
             if repo.was_build:
-                if self.mode == 'docker':
+                if self.mode == "docker":
                     print(f"Using image {repo.default_image_name} for {task['repo']}")
                     repo.image_name = repo.default_image_name
             else:
                 print("Building ...")
                 dct_build = repo.build_env(
-                    task['command_build'],
-                    timeout=task['timeout_build'] * self.time_scale_factor
+                    task["command_build"],
+                    timeout=task["timeout_build"] * self.time_scale_factor,
                 )
-                task['dct_build'] = json.dumps(dct_build)
+                task["dct_build"] = json.dumps(dct_build)
                 print("Build success")
 
             repo.clean()
-            repo.apply_patch(task['test_patch'])
+            repo.apply_patch(task["test_patch"])
             repo.apply_patch(task[self.column_patch])
-            
+
             dct_test = repo.run_test(
-                task['command_test_small'],
-                timeout=task['timeout_test'] * self.time_scale_factor
+                task["command_test_small"],
+                timeout=task["timeout_test"] * self.time_scale_factor,
             )
-            
-            task['dct_test'] = json.dumps(dct_test)
+
+            task["dct_test"] = json.dumps(dct_test)
             success, failed = LiveSWEBenchTaskManager.extract_test(dct_test)
-            if (set(success) & set(task['PASS_TO_PASS']) == set(task['PASS_TO_PASS'])):
-                print("Solved", task['instance_id'])
-                task['solved'] = 1
+            if set(success) & set(task["PASS_TO_PASS"]) == set(task["PASS_TO_PASS"]):
+                print("Solved", task["instance_id"])
+                task["solved"] = 1
             else:
-                print("Failed", task['instance_id'])
-                task['solved'] = 0
+                print("Failed", task["instance_id"])
+                task["solved"] = 0
 
         except GitException as e:
             print(f"Repo {task['repo']} {task['base_commit']} was deleted/moved")
@@ -160,7 +164,9 @@ class LiveSWEBenchTaskManager:
             if self.raise_exception:
                 raise e
 
-    def _build_and_eval_task_parallel(self, task_list: List[Dict[str, Union[str, int]]]) -> None:
+    def _build_and_eval_task_parallel(
+        self, task_list: List[Dict[str, Union[str, int]]]
+    ) -> None:
         """
         Internal helper to run tasks in parallel.
 
@@ -170,7 +176,10 @@ class LiveSWEBenchTaskManager:
             List of tasks to process.
         """
         with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
-            futures = [executor.submit(self.inplace_build_and_eval_single, task) for task in task_list]
+            futures = [
+                executor.submit(self.inplace_build_and_eval_single, task)
+                for task in task_list
+            ]
             for _ in tqdm(as_completed(futures), total=len(futures)):
                 pass
 
@@ -192,7 +201,9 @@ class LiveSWEBenchTaskManager:
             for column in self.REQUIRED_COLUMND:
                 assert column in task, f"there is no {column} at ind={ind}"
 
-    def inplace_build_and_eval(self, task_list: List[Dict[str, Union[str, int]]]) -> None:
+    def inplace_build_and_eval(
+        self, task_list: List[Dict[str, Union[str, int]]]
+    ) -> None:
         """
         Build and evaluate tasks in-place, sequentially or in parallel.
 

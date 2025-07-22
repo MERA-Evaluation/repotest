@@ -1,7 +1,8 @@
+import logging
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
-import logging
 
 # --- Load constants.env ---
 ENV_PATH = Path(__file__).parent / "constants.env"
@@ -10,6 +11,7 @@ if ENV_PATH.exists():
 else:
     raise FileNotFoundError(ENV_PATH)
 
+
 def enable_stdout_logs():
     logger = logging.getLogger("repotest")
     if logger.handlers:
@@ -17,12 +19,14 @@ def enable_stdout_logs():
     else:
         logger.setLevel(logging.DEBUG)
 
+
 def disable_stdout_logs():
     logger = logging.getLogger("repotest")
     if logger.handlers:
         logger.handlers[0].setLevel(logging.CRITICAL)
     else:
         logger.setLevel(logging.CRITICAL)
+
 
 def permanently_change_consts(name: str, value: str):
     """Update an existing key in constants.env and reload constants."""
@@ -52,17 +56,17 @@ def permanently_change_consts(name: str, value: str):
 
     # Optional: re-evaluate global constants if needed
     globals()[name] = os.environ[name]
-    if name.endswith('_INT'):
+    if name.endswith("_INT"):
         globals()[name] = int(globals()[name])
-    
+
     print(f"✅ Updated {name} to {value}")
 
 
 # --- From env ---
-#ToDo: disable double REPOTEST_CACHE_FOLDER and DEFAULTT_CACHE_FOLDER
+# ToDo: disable double REPOTEST_CACHE_FOLDER and DEFAULTT_CACHE_FOLDER
 DEFAULT_CACHE_FOLDER = os.path.expanduser(os.environ["REPOTEST_CACHE_FOLDER"])
 print(f"DEFAULT_CACHE_FOLDER={DEFAULT_CACHE_FOLDER}")
-#ToDo: use this folder instead of REPOTEST_CACHE_FOLDER
+# ToDo: use this folder instead of REPOTEST_CACHE_FOLDER
 REPOTEST_MAIN_FOLDER = os.path.expanduser(os.environ["REPOTEST_MAIN_FOLDER"])
 REPOTEST_CACHE_FOLDER = os.environ["REPOTEST_CACHE_FOLDER"]
 CONDA_ENV_NAME = os.environ["CONDA_ENV_NAME"]
@@ -79,7 +83,7 @@ OPTIMAL_CPU_NUM = max(int(os.cpu_count() * 0.5), 1)
 # Where we push/pull docker images
 DOCKER_REGISTRY_URI = os.environ.get("DOCKER_REGISTRY_URI", "")
 
-#Where we save s3 artifacts
+# Where we save s3 artifacts
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 
 # --- Logging levels ---

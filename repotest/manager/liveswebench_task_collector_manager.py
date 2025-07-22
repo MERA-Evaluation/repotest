@@ -1,12 +1,13 @@
-from tqdm import tqdm
 import json
-from repotest.core.docker.python import PythonDockerRepo
-from repotest.core.local.python import PythonLocalRepo
-from repotest.core.exceptions import GitException
-from repotest.constants import OPTIMAL_CPU_NUM
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Union
-import os
+from typing import Dict, List, Union
+
+from repotest.constants import OPTIMAL_CPU_NUM
+from repotest.core.docker.python import PythonDockerRepo
+from repotest.core.exceptions import GitException
+from repotest.core.local.python import PythonLocalRepo
+from tqdm import tqdm
+
 
 class LiveSWEBenchTaskCollectorManager:
     """
@@ -33,41 +34,48 @@ class LiveSWEBenchTaskCollectorManager:
         Class used to handle repositories (either Docker or Local).
     """
 
-    REQUIRED_COLUMND = ["task_id", "repo_name", "base_commit", "image_name",
-                        "command_test", "command_test_small",
-                        "test_patch", "gold_patch",
-                        "timeout_build",
-                        "timeout_test"
-                       ]
+    REQUIRED_COLUMND = [
+        "task_id",
+        "repo_name",
+        "base_commit",
+        "image_name",
+        "command_test",
+        "command_test_small",
+        "test_patch",
+        "gold_patch",
+        "timeout_build",
+        "timeout_test",
+    ]
     time_scale_factor: int = 1
 
     def __init__(
         self,
-        mode: str = 'docker',
+        mode: str = "docker",
         n_jobs: int = OPTIMAL_CPU_NUM,
         raise_exception: bool = True,
         verbose_all: bool = False,
-        time_scale_factor = 'auto'
+        time_scale_factor="auto",
     ):
-        assert mode in ('docker', 'local')
-        if mode == 'docker':
+        assert mode in ("docker", "local")
+        if mode == "docker":
             self.RepoClass = PythonDockerRepo
         else:
             self.RepoClass = PythonLocalRepo
 
         self.mode = mode
         self.n_jobs = n_jobs
-        if time_scale_factor == 'auto':
+        if time_scale_factor == "auto":
             self.time_scale_factor = self.n_jobs
         else:
-            self.time_scale_factor = max(1, self.n_jons/OPTIMAL_CPU_NUM)
-        
+            self.time_scale_factor = max(1, self.n_jobs / OPTIMAL_CPU_NUM)
+
         self.raise_exception = raise_exception
 
         if verbose_all:
             from repotest.constants import enable_stdout_logs
+
             enable_stdout_logs()
-    
+
     @staticmethod
     def extract_test(test_result: dict) -> tuple[set, set]:
         """
@@ -85,16 +93,16 @@ class LiveSWEBenchTaskCollectorManager:
         failed : set
             Set of test names that failed.
         """
-        list_of_tests = test_result.get('report', {}).get('tests', {})
+        list_of_tests = test_result.get("report", {}).get("tests", {})
         passed = set()
         failed = set()
         was = set()
 
         for d in list_of_tests:
-            test_name = d['nodeid']
+            test_name = d["nodeid"]
             assert test_name not in was
             was.add(test_name)
-            if d['outcome'] == 'passed':
+            if d["outcome"] == "passed":
                 passed.add(test_name)
             else:
                 failed.add(test_name)
@@ -103,9 +111,7 @@ class LiveSWEBenchTaskCollectorManager:
 
     @staticmethod
     def get_task_correctness(
-        dct_test_before: dict,
-        dct_test_after: dict,
-        dct_test_gold: dict
+        dct_test_before: dict, dct_test_after: dict, dct_test_gold: dict
     ) -> dict:
         """
         Determine task correctness by comparing test results before, after, and with gold patch.
@@ -135,18 +141,20 @@ class LiveSWEBenchTaskCollectorManager:
 
         res = {
             # All test passed in after, passed in gold and num of tests in after bigger then num of test in gold
-            'task_perfect': (len(success_gold) > len(success_after) and (success_after & success_gold) == success_after),
+            "task_perfect": (
+                len(success_gold) > len(success_after)
+                and (success_after & success_gold) == success_after
+            ),
             # There exist at least one test that passed in gold and fail/skiped in after
-            'task_ok': (len(success_gold - success_after) > 0),
+            "task_ok": (len(success_gold - success_after) > 0),
             # Tests that should be passed during model patch
-            'PASS_TO_PASS': success_gold,
+            "PASS_TO_PASS": success_gold,
             # Tests that could be not passed (skipped/failed/xfailed, etc) after model patch
-            'FAIL_TO_PASS': failed_gold
+            "FAIL_TO_PASS": failed_gold,
         }
 
-
         return res
-    
+
     def inplace_build_and_eval_single(self, task: Dict[str, Union[str, int]]) -> None:
         """
         Build and evaluate a single task in-place.
@@ -156,74 +164,91 @@ class LiveSWEBenchTaskCollectorManager:
         task : dict
             Task containing repository and command information.
         """
-        task['exception'] = ""
+        task["exception"] = ""
         try:
             repo = self.RepoClass(
-                repo=task['repo_name'],
-                base_commit=task['base_commit'],
-                **({"image_name": task['image_name']} if self.mode == 'docker' else {})
+                repo=task["repo_name"],
+                base_commit=task["base_commit"],
+                **({"image_name": task["image_name"]} if self.mode == "docker" else {}),
             )
             if repo.was_build:
-                if self.mode == 'docker':
-                    print(f"Using image {repo.default_image_name} for {task['repo_name']}")
+                if self.mode == "docker":
+                    print(
+                        f"Using image {repo.default_image_name} for {task['repo_name']}"
+                    )
                     repo.image_name = repo.default_image_name
             else:
                 print("Building ...")
                 dct_build = repo.build_env(
-                    task['command_build'],
-                    timeout=task['timeout_build'] * self.time_scale_factor
+                    task["command_build"],
+                    timeout=task["timeout_build"] * self.time_scale_factor,
                 )
-                task['dct_build'] = json.dumps(dct_build)
+                task["dct_build"] = json.dumps(dct_build)
                 print("Build success")
 
             print(f"Evaluating {task['repo_name']} {task['base_commit']}")
             repo.clean()
             dct_test_before = repo.run_test(
-                task['command_test_small'],
-                timeout=task['timeout_test'] * self.time_scale_factor
+                task["command_test_small"],
+                timeout=task["timeout_test"] * self.time_scale_factor,
             )
-            print("before", task.get('task_id'), dct_test_before.get('report').get('summary', {}))
+            print(
+                "before",
+                task.get("task_id"),
+                dct_test_before.get("report").get("summary", {}),
+            )
 
             repo.clean()
-            repo.apply_patch(task['test_patch'])
+            repo.apply_patch(task["test_patch"])
             dct_test_after = repo.run_test(
-                task['command_test_small'],
-                timeout=task['timeout_test'] * self.time_scale_factor
+                task["command_test_small"],
+                timeout=task["timeout_test"] * self.time_scale_factor,
             )
-            print("after", task.get('task_id'), dct_test_after.get('report').get('summary', {}))
+            print(
+                "after",
+                task.get("task_id"),
+                dct_test_after.get("report").get("summary", {}),
+            )
 
             repo.clean()
-            repo.apply_patch(task['test_patch'])
-            repo.apply_patch(task['gold_patch'])
+            repo.apply_patch(task["test_patch"])
+            repo.apply_patch(task["gold_patch"])
             dct_test_gold = repo.run_test(
-                task['command_test_small'],
-                timeout=task['timeout_test'] * self.time_scale_factor
+                task["command_test_small"],
+                timeout=task["timeout_test"] * self.time_scale_factor,
             )
-            print("gold", task.get('task_id'), dct_test_gold.get('report').get('summary', {}))
+            print(
+                "gold",
+                task.get("task_id"),
+                dct_test_gold.get("report").get("summary", {}),
+            )
 
-            task['dct_test_before'] = json.dumps(dct_test_before)
-            task['dct_test_after'] = json.dumps(dct_test_after)
-            task['dct_test_gold'] = json.dumps(dct_test_gold)
-            task['run_status'] = 1
-            
-            for key, value in self.get_task_correctness(dct_test_before=dct_test_before,
-                                                        dct_test_after=dct_test_after,
-                                                        dct_test_gold=dct_test_gold
-                                                       ).items():
+            task["dct_test_before"] = json.dumps(dct_test_before)
+            task["dct_test_after"] = json.dumps(dct_test_after)
+            task["dct_test_gold"] = json.dumps(dct_test_gold)
+            task["run_status"] = 1
+
+            for key, value in self.get_task_correctness(
+                dct_test_before=dct_test_before,
+                dct_test_after=dct_test_after,
+                dct_test_gold=dct_test_gold,
+            ).items():
                 task[key] = value
 
         except GitException as e:
             print(f"Repo {task['repo_name']} {task['base_commit']} was deleted/moved")
-            task['exception'] = str(e)
+            task["exception"] = str(e)
             if self.raise_exception:
                 raise e
         except Exception as e:
             print(f"Critical fail {task['repo_name']} {task['base_commit']}\n{str(e)}")
-            task['exception'] = str(e)
+            task["exception"] = str(e)
             if self.raise_exception:
                 raise e
 
-    def _build_and_eval_task_parallel(self, task_list: List[Dict[str, Union[str, int]]]) -> None:
+    def _build_and_eval_task_parallel(
+        self, task_list: List[Dict[str, Union[str, int]]]
+    ) -> None:
         """
         Internal helper to run tasks in parallel.
 
@@ -233,7 +258,10 @@ class LiveSWEBenchTaskCollectorManager:
             List of tasks to process.
         """
         with ThreadPoolExecutor(max_workers=self.n_jobs) as executor:
-            futures = [executor.submit(self.inplace_build_and_eval_single, task) for task in task_list]
+            futures = [
+                executor.submit(self.inplace_build_and_eval_single, task)
+                for task in task_list
+            ]
             for _ in tqdm(as_completed(futures), total=len(futures)):
                 pass
 
@@ -255,7 +283,9 @@ class LiveSWEBenchTaskCollectorManager:
             for column in self.REQUIRED_COLUMND:
                 assert column in task, f"there is no {column} at ind={ind}"
 
-    def inplace_build_and_eval(self, task_list: List[Dict[str, Union[str, int]]]) -> None:
+    def inplace_build_and_eval(
+        self, task_list: List[Dict[str, Union[str, int]]]
+    ) -> None:
         """
         Build and evaluate tasks in-place, sequentially or in parallel.
 
@@ -277,6 +307,7 @@ class LiveSWEBenchTaskCollectorManager:
                         print(f"Critical error {e}")
         else:
             self._build_and_eval_task_parallel(task_list)
+
 
 # ## Exmple of ussage:
 # import pandas as pd
