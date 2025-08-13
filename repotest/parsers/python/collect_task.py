@@ -89,6 +89,12 @@ class ContextParser:
 
         self.dfs(tree)
 
+    @staticmethod
+    def source_to_id(source):
+        prefix = os.path.expanduser("~/.cache/repotest/runs/")
+        assert source.startswith(prefix)
+        return '/'.join(source[len(prefix):].split('/')[1:])
+
     def parse_node(
         self, node: Union[ast.FunctionDef, ast.ClassDef], intent_type: str
     ) -> Dict[str, Any]:
@@ -130,8 +136,10 @@ class ContextParser:
             gt = "\n".join(self.lines[l:r]) + "\n"
             right_context = "\n".join(self.lines[r:]) + "\n"
             doc = None
-
+        
+        source = f"{self.fn}:{node.name}[{intent_type}]"
         return {
+            "id": self.source_to_id(source),
             "intent": f"{node.name}[{intent_type}]",
             "intent_type": intent_type,
             "intent_name": node.name,
@@ -143,7 +151,7 @@ class ContextParser:
             "doc": doc,
             "_node": node,
             "fn": self.fn,
-            "source": f"{self.fn}:{node.name}[{intent_type}]",
+            "source": source,
             "tests": set(),
         }
 
@@ -393,6 +401,7 @@ class TaskCollector:
 
     def validate(self):
         assert self.data["source"].nunique() == self.data.shape[0]
+        assert self.data["id"].nunique() == self.data.shape[0]
 
 
 # # ## Example of ussage

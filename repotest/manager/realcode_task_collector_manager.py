@@ -91,6 +91,10 @@ class RealcodeTaskCollectorManager:
             raise e
 
         repo.clean()
+        
+        if 'patch' in task:
+            repo.apply_patch(task['patch'])
+        
         command_build_and_test = (
             task["command_build"]
             + (";\n" if task["command_build"][-1] != ";" else "\n")

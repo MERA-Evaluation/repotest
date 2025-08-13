@@ -97,6 +97,10 @@ class TaskManagerRealcode:
                 return
 
             repo.clean()
+
+            if 'patch' in task:
+                repo.apply_patch(task['patch'])
+            
             if self.mode == "docker":
                 repo.image_name = repo.default_image_name
 
@@ -104,6 +108,10 @@ class TaskManagerRealcode:
 
             for gen_column in self.gen_columns:
                 repo.clean()
+                
+                if 'patch' in task:
+                    repo.apply_patch(task['patch'])
+                
                 repo.change_file_realcode(
                     fn_relative=task["fn"],
                     left_context=task["left_context"],
