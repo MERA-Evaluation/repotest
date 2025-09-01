@@ -110,7 +110,7 @@ class AbstractRepo(ABC):
         if not os.path.exists(self.original_repo_folder):
             self._repo = git.Repo.clone_from(self.url, self.original_repo_folder)
 
-        copytree(self.original_repo_folder, self.cache_folder, dirs_exist_ok=True)
+        copytree(self.original_repo_folder, self.cache_folder, dirs_exist_ok=True, symlinks=True)
         self._repo = git.Repo(self.cache_folder)
 
         logger.debug(f"Checking out commit {self.base_commit}")
@@ -199,7 +199,7 @@ class AbstractRepo(ABC):
             logger.critical("critical faile %s", self)
             logger.critical("git_patch %s", git_patch)
             logger.critical(e, exc_info=True)
-            raise e
+            raise e from e
 
     def get_git_diff(self):
         """Get git diff"""

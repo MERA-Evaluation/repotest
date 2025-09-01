@@ -97,7 +97,6 @@ class TaskManagerRealcode:
                 return
 
             repo.clean()
-
             if 'patch' in task:
                 repo.apply_patch(task['patch'])
             
@@ -108,7 +107,6 @@ class TaskManagerRealcode:
 
             for gen_column in self.gen_columns:
                 repo.clean()
-                
                 if 'patch' in task:
                     repo.apply_patch(task['patch'])
                 
@@ -129,7 +127,7 @@ class TaskManagerRealcode:
             task["status"] = 1
         except Exception as e:
             if self.raise_exception:
-                raise e
+                raise e from e
         finally:
             if passed_dict is None:
                 task["pass_dry_run"] = 0

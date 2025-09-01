@@ -26,7 +26,7 @@ class RealcodeTaskCollectorManager:
     """
 
     build_success_status = {}
-
+    
     def __init__(
         self,
         mode="docker",

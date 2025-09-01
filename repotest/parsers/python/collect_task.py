@@ -5,10 +5,11 @@ import os
 from bisect import bisect_right
 from functools import cached_property
 from typing import Any, Dict, List, Set, Tuple, Union
-
 import coverage
 import pandas as pd
 from repotest.constants import REPOTEST_MAIN_FOLDER
+import logging
+logger = logging.getLogger("repotest")
 
 
 class LineIndexMap:
@@ -79,7 +80,12 @@ class ContextParser:
         self.problems: List[Dict[str, Any]] = []
 
         with open(fn, "r") as file:
-            source_code: str = file.read()
+            try:
+                source_code: str = file.read()
+            except UnicodeDecodeError as e:
+                logger.critical(f"{fn} fail")
+                logger.critical(e, exc_info=True)
+                source_code: str = ""
             self.lines: List[str] = source_code.split("\n")
             try:
                 tree = ast.parse(source_code, filename=fn)

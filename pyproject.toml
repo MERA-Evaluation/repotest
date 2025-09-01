@@ -14,7 +14,7 @@ include = ["repotest*"]  # ["*"] by default
 
 [project]
 name = "repositorytest"
-version = "0.5.1"
+version = "0.5.3"
 license = "MIT"
 description = "A tool for cloning and testing repositories (docker or local, interface is the same)."
 readme = "README.md"
