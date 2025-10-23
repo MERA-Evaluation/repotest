@@ -1,5 +1,5 @@
 """
-Php Docker repository test runner.
+JavaScript Docker repository test runner.
 """
 import json, logging, os, re, time
 from functools import cached_property
@@ -11,11 +11,11 @@ from repotest.core.exceptions import TimeOutException
 
 logger = logging.getLogger("repotest")
 
-def parse_php_test_output(stdout: str) -> Dict[str, object]:
-    """Parse Php test output."""
+def parse_javascript_test_output(stdout: str) -> Dict[str, object]:
+    """Parse JavaScript test output."""
     if not stdout:
         return {"tests": [], "summary": {"total": 0, "passed": 0, "failed": 0}, "status": "unknown"}
-
+    
     result = {"tests": [], "summary": {"total": 0, "passed": 0, "failed": 0}, "status": "unknown", "raw_output": stdout}
     passed_patterns = [r"(\d+)\s+passed", r"(\d+)\s+test[s]?\s+passed", r"OK\s+\((\d+)\s+test"]
     failed_patterns = [r"(\d+)\s+failed", r"(\d+)\s+test[s]?\s+failed", r"FAIL(?:ED)?[:\s]+(\d+)"]
@@ -37,34 +37,35 @@ def parse_php_test_output(stdout: str) -> Dict[str, object]:
     
     return result
 
-class PhpDockerRepo(AbstractDockerRepo):
-    """A class for managing and testing Php repositories in a Docker container."""
+class JavaScriptDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing JavaScript repositories in a Docker container."""
     
     def __init__(self, repo: str, base_commit: str, default_cache_folder: str = DEFAULT_CACHE_FOLDER,
-                 default_url: str = "http://github.com", image_name: str = "composer:latest",
+                 default_url: str = "http://github.com", image_name: str = "node:latest",
                  cache_mode: Literal["download", "shared", "local", "volume"] = "volume") -> None:
         super().__init__(repo=repo, base_commit=base_commit, default_cache_folder=default_cache_folder,
                          default_url=default_url, image_name=image_name, cache_mode=cache_mode)
+        self.cache_folder = default_cache_folder
         self.stdout = ""
         self.stderr = ""
         self.std = ""
         self.return_code = 0
     
     @cached_property
-    def _user_php_cache(self) -> str:
-        return os.path.expanduser("~/.cache/php")
+    def _user_javascript_cache(self) -> str:
+        return os.path.expanduser("~/.cache/javascript")
     
     @cached_property
-    def _local_php_cache(self) -> str:
-        return os.path.join(self.cache_folder, ".php_cache")
+    def _local_javascript_cache(self) -> str:
+        return os.path.join(self.cache_folder, ".javascript_cache")
     
     def _setup_container_volumes(self, workdir: Optional[str] = None) -> Dict[str, Dict[str, str]]:
         volumes = {}
         if workdir:
             volumes[self.cache_folder] = {"bind": workdir, "mode": "rw"}
         if self.cache_mode == "volume":
-            self.create_volume("php-cache")
-            volumes["php-cache"] = {"bind": "/root/.cache/php", "mode": "rw"}
+            self.create_volume("javascript-cache")
+            volumes["javascript-cache"] = {"bind": "/root/.cache/javascript", "mode": "rw"}
         return volumes
     
     def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
@@ -75,7 +76,7 @@ class PhpDockerRepo(AbstractDockerRepo):
                            volumes=volumes, working_dir="/run_dir")
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"sh -c '{command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
         except TimeOutException:
             self.return_code = 2
             self.stderr += b"Timeout exception"
@@ -121,14 +122,14 @@ class PhpDockerRepo(AbstractDockerRepo):
             self.build_env(command=command_build, timeout=timeout_build)
         return self.run_test(command=command_test, timeout=timeout_test)
     
-    def run_test(self, command: str = "vendor/bin/phpunit", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
+    def run_test(self, command: str = "yarn test", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"sh -c '{command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
         except TimeOutException:
             self.return_code = 2
             self.stderr = b"Timeout exception"
@@ -136,7 +137,7 @@ class PhpDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         test_results = {}
-        fn_result = os.path.join(self.cache_folder, "gotest_results.jsonl")
+        fn_result = os.path.join(self.cache_folder, "gotest_results.json")
         if os.path.exists(fn_result):
             try:
                 with open(fn_result, "r") as f:
@@ -152,5 +153,5 @@ class PhpDockerRepo(AbstractDockerRepo):
     
     def _format_results(self, test_json: Optional[Dict] = None) -> Dict[str, object]:
         return {"stdout": self.stdout, "stderr": self.stderr, "std": self.std, "returncode": self.return_code,
-                "parser": parse_php_test_output(self.stdout), "report": test_json or {},
+                "parser": parse_javascript_test_output(self.stdout), "report": test_json or {},
                 "time": self.evaluation_time, "run_id": self.run_id}
