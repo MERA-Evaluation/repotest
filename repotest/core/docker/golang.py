@@ -1,10 +1,3 @@
-"""
-Go (Golang) Docker repository test runner.
-
-This module provides functionality for running Go tests in Docker containers
-with machine-readable JSON output parsing.
-"""
-
 import json
 import logging
 import os

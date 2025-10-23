@@ -1,5 +1,3 @@
-"""Node.js language Docker repository management."""
-
 import json
 import logging
 import os

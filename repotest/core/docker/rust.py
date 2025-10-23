@@ -1,6 +1,3 @@
-"""
-Rust Docker repository test runner.
-"""
 import json, logging, os, re, time
 from functools import cached_property
 from typing import Dict, Literal, Optional
