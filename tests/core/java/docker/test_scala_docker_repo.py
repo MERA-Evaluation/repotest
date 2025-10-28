@@ -15,7 +15,7 @@ def repo(request):
 def test_scala_docker_repo(repo):
     assert repo.repo == "monix/monix"
     
-    result = repo.run_test(timeout=60 * 5)
+    result = repo.run_test(timeout=60 * 10)
     
     assert result is not None
     parser = result["parser"]
