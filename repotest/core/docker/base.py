@@ -129,8 +129,9 @@ class AbstractDockerRepo(AbstractRepo):
         stop=stop_after_attempt(2),  # Retry 2 times
         wait=wait_chain(
             wait_fixed(1),  # First retry after 1s
-            wait_fixed(3),  # Second retry after 3s
+            wait_fixed(3),  # Second retry after 3s,
         ),
+        before_sleep=lambda retry_state: logger.warning("%d/%d attemps", retry_state.attempt_number, 2)
     )
     def start_container(
         self,
@@ -184,7 +185,7 @@ class AbstractDockerRepo(AbstractRepo):
                 cpuset_cpus=self.RANDDOM_CONTAINER_CPUSER_CPUS,
             )
         except APIError as e:
-            logger.warning("start_container fail")
+            logger.warning("start_container fail, try again")
             raise DockerStartContainerFailed(
                 f"Failed to start Docker container: {self} {e}"
             )
@@ -193,7 +194,23 @@ class AbstractDockerRepo(AbstractRepo):
             logger.critical(e)
             raise e
         return
+    
+    def _image_exists(self, name: str) -> bool:
+        """Check if a Docker image exists."""
+        try:
+            self.docker_client.images.get(name)
+            return True
+        except ImageNotFound:
+            return False
+        except APIError as e:
+            logger.warning(f"Docker API error when checking image: {e}")
+            return False
 
+    @property
+    def was_build(self) -> bool:
+        """Check if the image was already built."""
+        return self._image_exists(self.default_image_name)
+    
     def delete_image_if_exist(self):
         try:
             # Check if the image exists
@@ -213,7 +230,21 @@ class AbstractDockerRepo(AbstractRepo):
             logger.critical(f"An error occurred while deleting the image: {e}")
             logger.critical(e, exc_info=True)
             raise e
-
+    
+    def _commit_container_image(self, retries: int = 3, delay: int = 10) -> None:
+        """Commit the container to an image with retry logic."""
+        for attempt in range(retries):
+            try:
+                self.container.commit(self.default_image_name)
+                logger.info("Successfully committed container to image")
+                self.image_name = self.default_image_name
+                return
+            except APIError as e:
+                logger.warning(f"Failed to commit image (attempt {attempt + 1}): {e}")
+                if attempt == retries - 1:
+                    raise
+                time.sleep(delay)
+    
     def stop_container(self, timeout=0):
         logger.debug("Stopping container")
         logger.debug(self.container.status)

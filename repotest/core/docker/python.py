@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import time
-from enum import Enum, auto
 from functools import cached_property
 from typing import Dict, Literal, Optional
 
@@ -39,10 +38,6 @@ class PythonDockerRepo(AbstractDockerRepo):
             image_name=image_name,
             cache_mode=cache_mode,
         )
-
-    # @cached_property
-    # def container_name(self):
-    #     return self.default_container_name + "-" + self.run_id
 
     @cached_property
     def _user_pip_cache(self) -> str:
@@ -126,36 +121,7 @@ class PythonDockerRepo(AbstractDockerRepo):
 
         return self._format_results()
 
-    def _commit_container_image(self, retries: int = 3, delay: int = 10) -> None:
-        """Commit the container to an image with retry logic."""
-        for attempt in range(retries):
-            try:
-                self.container.commit(self.default_image_name)
-                logger.info("Successfully committed container to image")
-                self.image_name = self.default_image_name
-                return
-            except APIError as e:
-                logger.warning(f"Failed to commit image (attempt {attempt + 1}): {e}")
-                if attempt == retries - 1:
-                    raise
-                time.sleep(delay)
-
-    def _image_exists(self, name: str) -> bool:
-        """Check if a Docker image exists."""
-        try:
-            self.docker_client.images.get(name)
-            return True
-        except ImageNotFound:
-            return False
-        except APIError as e:
-            logger.warning(f"Docker API error when checking image: {e}")
-            return False
-
-    @property
-    def was_build(self) -> bool:
-        """Check if the image was already built."""
-        return self._image_exists(self.default_image_name)
-
+    #ToDo: remove this is not good abstraction
     def __call__(
         self,
         command_build: str,
