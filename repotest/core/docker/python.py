@@ -13,15 +13,10 @@ from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
 from repotest.parsers.python.pytest_stdout import parse_pytest_stdout
+from repotest.core.docker.types import CacheMode
 
 logger = logging.getLogger("repotest")
 
-
-class CacheMode(Enum):
-    DOWNLOAD = auto()
-    SHARED = auto()
-    LOCAL = auto()
-    VOLUME = auto()
 
 
 class PythonDockerRepo(AbstractDockerRepo):
@@ -34,7 +29,7 @@ class PythonDockerRepo(AbstractDockerRepo):
         default_cache_folder: str = DEFAULT_CACHE_FOLDER,
         default_url: str = "http://github.com",
         image_name: str = DOCKER_PYTHON_DEFAULT_IMAGE,
-        cache_mode: Literal["download", "shared", "local", "volume"] = "volume",
+        cache_mode: CacheMode = "volume",
     ) -> None:
         super().__init__(
             repo=repo,
@@ -79,7 +74,7 @@ class PythonDockerRepo(AbstractDockerRepo):
 
     def build_env(
         self,
-        command: str,
+        command: str = "pip install -e .;\npip install pytest pytest-json-report;",
         timeout: int = DEFAULT_BUILD_TIMEOUT_INT,
         commit_image=True,
         stop_container=True,

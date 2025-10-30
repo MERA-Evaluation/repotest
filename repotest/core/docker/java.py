@@ -11,6 +11,7 @@ from repotest.parsers.java.maven_stdout import analyze_maven_stdout
 from repotest.parsers.java.surefire_report import (find_test_reports,
                                                    group_test_cases_by_status,
                                                    parse_xml_test_report)
+from repotest.core.docker.types import CacheMode
 
 logger = logging.getLogger("repotest")
 
@@ -27,7 +28,7 @@ class JavaDockerRepo(AbstractDockerRepo):
         default_cache_folder: str = DEFAULT_CACHE_FOLDER,
         default_url: str = "http://github.com",
         image_name: str = "maven:3.9.9-eclipse-temurin-23-alpine",
-        cache_mode: str = "volume",
+        cache_mode: CacheMode = "volume",
     ) -> None:
         """
         Initializes the Docker repository manager.

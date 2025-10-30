@@ -19,6 +19,7 @@ from repotest.core.base import AbstractRepo
 from repotest.core.exceptions import (DockerStartContainerFailed,
                                       TimeOutException)
 from tenacity import retry, stop_after_attempt, wait_chain, wait_fixed
+from repotest.core.docker.types import CacheMode
 
 logger = logging.getLogger("repotest")
 

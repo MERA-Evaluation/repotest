@@ -5,6 +5,7 @@ from docker.errors import APIError, ImageNotFound
 from repotest.constants import DEFAULT_BUILD_TIMEOUT_INT, DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
+from repotest.core.docker.types import CacheMode
 
 logger = logging.getLogger("repotest")
 
@@ -126,9 +127,14 @@ def _parse_jest_json(data: Dict) -> Dict[str, object]:
 
 class JavaScriptDockerRepo(AbstractDockerRepo):
     
-    def __init__(self, repo: str, base_commit: str, default_cache_folder: str = DEFAULT_CACHE_FOLDER,
-                 default_url: str = "http://github.com", image_name: str = "node:18",
-                 cache_mode: Literal["download", "shared", "local", "volume"] = "volume") -> None:
+    def __init__(self, 
+                 repo: str, 
+                 base_commit: str, 
+                 default_cache_folder: str = DEFAULT_CACHE_FOLDER,
+                 default_url: str = "http://github.com", 
+                 image_name: str = "node:20",
+                 cache_mode: CacheMode = "volume"
+               ) -> None:
         super().__init__(repo=repo, base_commit=base_commit, default_cache_folder=default_cache_folder,
                          default_url=default_url, image_name=image_name, cache_mode=cache_mode)
         self.stdout = ""
@@ -193,8 +199,12 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
         
         return merged_result
     
-    def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
-                  stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
+    def build_env(self, command: str = "yarn install --ignore-scripts", 
+                  timeout: int = DEFAULT_BUILD_TIMEOUT_INT, 
+                  commit_image: bool = True,
+                  stop_container: bool = True, 
+                  push_image: bool = False
+                  ) -> Dict[str, object]:
         self.container_name = self.default_container_name
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,

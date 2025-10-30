@@ -5,6 +5,7 @@ from docker.errors import APIError, ImageNotFound
 from repotest.constants import DEFAULT_BUILD_TIMEOUT_INT, DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
+from repotest.core.docker.types import CacheMode
 
 logger = logging.getLogger("repotest")
 
@@ -131,10 +132,14 @@ def _parse_rspec_json(data: Dict) -> Dict[str, object]:
 
 
 class RubyDockerRepo(AbstractDockerRepo):
-    
-    def __init__(self, repo: str, base_commit: str, default_cache_folder: str = DEFAULT_CACHE_FOLDER,
-                 default_url: str = "http://github.com", image_name: str = "ruby:3.2",
-                 cache_mode: Literal["download", "shared", "local", "volume"] = "volume") -> None:
+    def __init__(self, 
+                 repo: str, 
+                 base_commit: str, 
+                 default_cache_folder: str = DEFAULT_CACHE_FOLDER,
+                 default_url: str = "http://github.com",
+                 image_name: str = "ruby:3.2",
+                 cache_mode: CacheMode = "volume"
+                ) -> None:
         super().__init__(repo=repo, base_commit=base_commit, default_cache_folder=default_cache_folder,
                          default_url=default_url, image_name=image_name, cache_mode=cache_mode)
         self.stdout = ""
