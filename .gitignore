@@ -24,3 +24,5 @@ dist/
 
 # Pytest outputs
 outputs/
+
+*.pickle

@@ -302,14 +302,13 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
     
     def run_test(self, command: str = "npm test", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
-        
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
         
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c 'mkdir -p test-results && {command}'", timeout=timeout)
                 
         except TimeOutException:
             self.return_code = 2
@@ -319,32 +318,32 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        all_report_files = set()
+        all_report_files_dict = {}
         
         report_dir = os.path.join(self.cache_folder, "test-results")
         if os.path.exists(report_dir) and os.path.isdir(report_dir):
             for filename in os.listdir(report_dir):
                 if filename.endswith((".xml", ".json")):
-                    all_report_files.add(os.path.join(report_dir, filename))
+                    assert filename not in all_report_files_dict
+                    all_report_files_dict[filename] = os.path.join(report_dir, filename)
         
-        known_paths = [
-            os.path.join(self.cache_folder, "junit.xml"),
-            os.path.join(self.cache_folder, "test-results.json"),
-            os.path.join(self.cache_folder, "coverage/test-report.xml"),
-        ]
         
+        known_paths = ["junit.xml", "test-results.json", "coverage/test-report.xml"]
         for report_path in known_paths:
             if os.path.exists(report_path) and os.path.isfile(report_path):
-                 all_report_files.add(report_path)
+                 assert filename not in all_report_files_dict
+                 all_report_files_dict[report_path] = os.path.join(self.cache_folder, report_path)
+                #  all_report_files.add(report_path)
 
-        parsed_reports = []
-        for report_file in all_report_files:
+        parsed_reports = {}
+        for name, report_file in all_report_files_dict.items():
             parsed_report = parse_javascript_test_report(report_file)
             if parsed_report and parsed_report.get("summary", {}).get("total", 0) > 0:
-                parsed_reports.append(parsed_report)
+                parsed_reports[name] = parsed_report
         
-        test_results = self._merge_reports(parsed_reports)
-        
+        test_results = self._merge_reports(list(parsed_reports.values()))
+        test_results['_details'] = parsed_reports
+
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
         

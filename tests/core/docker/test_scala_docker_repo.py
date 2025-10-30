@@ -19,9 +19,9 @@ def test_scala_docker_repo(repo):
     
     assert result is not None
     parser = result["parser"]
-    assert parser["status"] in ["passed", "failed"]
-    assert parser["summary"]["total"] >= 0
-    assert parser["summary"]["passed"] >= 0
+    assert parser["status"] == "passed"
+    assert parser["summary"]["total"] > 0
+    assert parser["summary"]["passed"] > 0
     assert parser["summary"]["failed"] >= 0
     assert parser["summary"]["skipped"] >= 0
     assert isinstance(result["report"], dict)
