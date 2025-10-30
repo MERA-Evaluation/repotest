@@ -42,6 +42,7 @@ def parse_pytest_stdout(s: str) -> Dict[str, Any]:
         res["failures"] = failure_matches
 
     # Extract summary statistics
+    res['summary']['total'] = 0
     for key in [
         "passed",
         "error",
@@ -55,8 +56,21 @@ def parse_pytest_stdout(s: str) -> Dict[str, Any]:
         lst = re.findall(ptrn, s)
         if key in NO_DUPLICATES_SET:
             res["summary"][key] = parse_single(lst[-1]) if lst else 0
+            res['summary']['total'] += res["summary"][key]
         else:
             res["summary"][key] = parse_single(lst[-1]) if lst else 0
             res["summary"]["list_" + key] = lst
-
+    
+    n_passed = (res['summary']['passed'] + res['summary']['xpassed'])
+    n_failed = (res['summary']['error'] + \
+                res['summary']['failed'] + \
+                res['summary']['xfailed']
+               )
+    
+    if (n_passed > 0) and (n_failed == 0):
+        res['status'] = "passed"
+    elif (n_passed == 0):
+        res['status'] = "failed"
+    else:
+        res['status'] = 'unknown'
     return res

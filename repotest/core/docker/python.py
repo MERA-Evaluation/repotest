@@ -188,7 +188,7 @@ ulimit -n 65535;
 
     def run_test(
         self,
-        command: str = "pytest tests",
+        command: str = "pytest --json-report --json-report-file=report_pytest.json",
         timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
         stop_container: bool = True,
     ) -> Dict[str, object]:
