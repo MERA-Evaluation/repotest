@@ -169,6 +169,30 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
         
         return volumes
     
+    def _merge_reports(self, reports: list[Dict[str, dict]]) -> Dict[str, dict]:
+        if not reports:
+            return {}
+        
+        merged_result = {
+            "tests": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+        }
+        
+        for report in reports:
+            if "tests" in report:
+                merged_result["tests"].extend(report.get("tests", []))
+            
+            summary = report.get("summary", {})
+            merged_result["summary"]["total"] += summary.get("total", 0)
+            merged_result["summary"]["passed"] += summary.get("passed", 0)
+            merged_result["summary"]["failed"] += summary.get("failed", 0)
+            merged_result["summary"]["skipped"] += summary.get("skipped", 0)
+            merged_result["summary"]["errors"] += summary.get("errors", 0)
+        
+        merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
+        
+        return merged_result
+    
     def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
                   stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
         self.container_name = self.default_container_name
@@ -198,11 +222,6 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
                         '''
         
         try:
-            self.timeout_exec_run(
-                f"bash -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
-            
             result = self.timeout_exec_run(
                 "bash -c 'cat /run_dir/package.json 2>/dev/null || echo \"{}\"}\'",
                 timeout=30
@@ -234,7 +253,7 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
         
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
         except TimeOutException:
             self.return_code = 2
             self.stderr += b"Timeout exception"
@@ -284,25 +303,13 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
     def run_test(self, command: str = "npm test", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
         
-        if not self.was_build:
-            logger.info("Building environment before running tests")
-            self.build_env(command="npm install", timeout=DEFAULT_BUILD_TIMEOUT_INT, commit_image=True, stop_container=True)
-        
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
         
         try:
-            self.timeout_exec_run(
-                f"bash -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
-        except Exception as e:
-            logger.warning(f"Failed to create test-results directory: {e}")
-        
-        try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
                 
         except TimeOutException:
             self.return_code = 2
@@ -312,33 +319,31 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        test_results = {}
-        
-        report_paths = [
-            os.path.join(self.cache_folder, "test-results"),
-            os.path.join(self.cache_folder, "test-results/junit.xml"),
-            os.path.join(self.cache_folder, "junit.xml"),
-            os.path.join(self.cache_folder, "test-results.json"),
-            os.path.join(self.cache_folder, "coverage/test-report.xml"),
-        ]
+        all_report_files = set()
         
         report_dir = os.path.join(self.cache_folder, "test-results")
         if os.path.exists(report_dir) and os.path.isdir(report_dir):
             for filename in os.listdir(report_dir):
                 if filename.endswith((".xml", ".json")):
-                    report_path = os.path.join(report_dir, filename)
-                    parsed_report = parse_javascript_test_report(report_path)
-                    if parsed_report:
-                        test_results = parsed_report
-                        break
+                    all_report_files.add(os.path.join(report_dir, filename))
         
-        if not test_results:
-            for report_path in report_paths:
-                if os.path.exists(report_path) and os.path.isfile(report_path):
-                    parsed_report = parse_javascript_test_report(report_path)
-                    if parsed_report:
-                        test_results = parsed_report
-                        break
+        known_paths = [
+            os.path.join(self.cache_folder, "junit.xml"),
+            os.path.join(self.cache_folder, "test-results.json"),
+            os.path.join(self.cache_folder, "coverage/test-report.xml"),
+        ]
+        
+        for report_path in known_paths:
+            if os.path.exists(report_path) and os.path.isfile(report_path):
+                 all_report_files.add(report_path)
+
+        parsed_reports = []
+        for report_file in all_report_files:
+            parsed_report = parse_javascript_test_report(report_file)
+            if parsed_report and parsed_report.get("summary", {}).get("total", 0) > 0:
+                parsed_reports.append(parsed_report)
+        
+        test_results = self._merge_reports(parsed_reports)
         
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()

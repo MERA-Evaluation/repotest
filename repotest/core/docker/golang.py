@@ -1,4 +1,7 @@
-import json, logging, os, time
+import json
+import logging
+import os
+import time
 from functools import cached_property
 from typing import Dict, Literal, Optional
 from docker.errors import APIError, ImageNotFound
@@ -226,10 +229,6 @@ class GoLangDockerRepo(AbstractDockerRepo):
                            volumes=volumes, working_dir="/run_dir")
         
         try:
-            self.timeout_exec_run(
-                f"sh -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
             
             self.timeout_exec_run(
                 f"sh -c 'go install github.com/jstemmer/go-junit-report/v2@latest || true'",
@@ -242,7 +241,7 @@ class GoLangDockerRepo(AbstractDockerRepo):
         
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"sh -c '{command}'", timeout=timeout)
+            self.timeout_exec_run(f"sh -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
         except TimeOutException:
             self.return_code = 2
             self.stderr += b"Timeout exception"
@@ -292,21 +291,9 @@ class GoLangDockerRepo(AbstractDockerRepo):
     def run_test(self, command: str = "go test -json ./...", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
         
-        if not self.was_build:
-            logger.info("Building environment before running tests")
-            self.build_env(command="go build ./...", timeout=DEFAULT_BUILD_TIMEOUT_INT, commit_image=True, stop_container=True)
-        
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
-        
-        try:
-            self.timeout_exec_run(
-                f"sh -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
-        except Exception as e:
-            logger.warning(f"Failed to create test-results directory: {e}")
         
         try:
             self.evaluation_time = time.time()
@@ -315,8 +302,10 @@ class GoLangDockerRepo(AbstractDockerRepo):
             if "go test" in command and "-json" not in command:
                 modified_command = command.replace("go test", "go test -json")
             
+            full_command = f"mkdir -p /run_dir/test-results && ({modified_command} 2>&1 | tee /run_dir/test-results/go-test.json | go-junit-report > /run_dir/test-results/junit.xml || {modified_command} > /run_dir/test-results/go-test.json)"
+            
             self.timeout_exec_run(
-                f"sh -c '{modified_command} 2>&1 | tee /run_dir/test-results/go-test.json | go-junit-report > /run_dir/test-results/junit.xml || {modified_command} > /run_dir/test-results/go-test.json'",
+                f"sh -c '{full_command}'",
                 timeout=timeout
             )
                 
@@ -329,30 +318,22 @@ class GoLangDockerRepo(AbstractDockerRepo):
             self._convert_std_from_bytes_to_str()
         
         test_results = {}
+
+        cache_folder = self.cache_folder if self.cache_folder is not None else "."
         
-        report_paths = [
-            os.path.join(self.cache_folder, "test-results/go-test.json"),
-            os.path.join(self.cache_folder, "test-results/junit.xml"),
-            os.path.join(self.cache_folder, "gotest_results.jsonl"),
-        ]
-        
-        report_dir = os.path.join(self.cache_folder, "test-results")
-        if os.path.exists(report_dir) and os.path.isdir(report_dir):
-            for filename in os.listdir(report_dir):
-                if filename.endswith((".json", ".xml")):
-                    report_path = os.path.join(report_dir, filename)
-                    parsed_report = parse_go_test_report(report_path)
-                    if parsed_report:
-                        test_results = parsed_report
-                        break
+        json_report_path = os.path.join(cache_folder, "test-results/go-test.json")
+        if os.path.exists(json_report_path) and os.path.isfile(json_report_path):
+            test_results = parse_go_test_report(json_report_path)
         
         if not test_results:
-            for report_path in report_paths:
-                if os.path.exists(report_path) and os.path.isfile(report_path):
-                    parsed_report = parse_go_test_report(report_path)
-                    if parsed_report:
-                        test_results = parsed_report
-                        break
+            xml_report_path = os.path.join(cache_folder, "test-results/junit.xml")
+            if os.path.exists(xml_report_path) and os.path.isfile(xml_report_path):
+                test_results = parse_go_test_report(xml_report_path)
+
+        if not test_results:
+            jsonl_report_path = os.path.join(cache_folder, "gotest_results.jsonl")
+            if os.path.exists(jsonl_report_path) and os.path.isfile(jsonl_report_path):
+                 test_results = parse_go_test_report(jsonl_report_path)
         
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()

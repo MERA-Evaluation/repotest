@@ -1,4 +1,7 @@
-import json, logging, os, time
+import json
+import logging
+import os
+import time
 from functools import cached_property
 from typing import Dict, Literal, Optional
 from docker.errors import APIError, ImageNotFound
@@ -148,12 +151,7 @@ class CppDockerRepo(AbstractDockerRepo):
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
         
-        try:
-            self.timeout_exec_run(
-                f"sh -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
-            
+        try:           
             result = self.timeout_exec_run(
                 "sh -c 'cat /run_dir/CMakeLists.txt 2>/dev/null || echo \"\"'",
                 timeout=30
@@ -175,7 +173,7 @@ class CppDockerRepo(AbstractDockerRepo):
         
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"sh -c '{command}'", timeout=timeout)
+            self.timeout_exec_run(f"sh -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
         except TimeOutException:
             self.return_code = 2
             self.stderr += b"Timeout exception"
@@ -225,21 +223,9 @@ class CppDockerRepo(AbstractDockerRepo):
     def run_test(self, command: str = "ctest -V", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
         
-        if not self.was_build:
-            logger.info("Building environment before running tests")
-            self.build_env(command="cmake . && make", timeout=DEFAULT_BUILD_TIMEOUT_INT, commit_image=True, stop_container=True)
-        
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
-        
-        try:
-            self.timeout_exec_run(
-                f"sh -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
-        except Exception as e:
-            logger.warning(f"Failed to create test-results directory: {e}")
         
         try:
             self.evaluation_time = time.time()
@@ -248,7 +234,7 @@ class CppDockerRepo(AbstractDockerRepo):
             if "ctest" in command and "--output-junit" not in command:
                 modified_command = f"{command} --output-junit /run_dir/test-results/junit.xml"
             
-            self.timeout_exec_run(f"sh -c '{modified_command}'", timeout=timeout)
+            self.timeout_exec_run(f"sh -c 'mkdir -p /run_dir/test-results && {modified_command}'", timeout=timeout)
                 
         except TimeOutException:
             self.return_code = 2
@@ -262,22 +248,10 @@ class CppDockerRepo(AbstractDockerRepo):
         
         cache_folder = self.cache_folder if self.cache_folder is not None else "."
         
-        report_paths = [
-            os.path.join(cache_folder, "test-results/junit.xml"),
-            os.path.join(cache_folder, "Testing/TAG"),
-            os.path.join(cache_folder, "Testing"),
-        ]
-        
-        report_dir = os.path.join(cache_folder, "test-results")
-        if os.path.exists(report_dir) and os.path.isdir(report_dir):
-            for filename in os.listdir(report_dir):
-                if filename.endswith((".json", ".xml")):
-                    report_path = os.path.join(report_dir, filename)
-                    parsed_report = parse_cpp_test_report(report_path)
-                    if parsed_report:
-                        test_results = parsed_report
-                        break
-        
+        junit_report_path = os.path.join(cache_folder, "test-results/junit.xml")
+        if os.path.exists(junit_report_path) and os.path.isfile(junit_report_path):
+            test_results = parse_cpp_test_report(junit_report_path)
+
         if not test_results:
             testing_dir = os.path.join(cache_folder, "Testing")
             if os.path.exists(testing_dir) and os.path.isdir(testing_dir):
@@ -293,14 +267,6 @@ class CppDockerRepo(AbstractDockerRepo):
                                     test_results = parsed_report
                     except Exception as e:
                         logger.warning(f"Failed to read CTest results: {e}")
-        
-        if not test_results:
-            for report_path in report_paths:
-                if os.path.exists(report_path) and os.path.isfile(report_path):
-                    parsed_report = parse_cpp_test_report(report_path)
-                    if parsed_report:
-                        test_results = parsed_report
-                        break
         
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()

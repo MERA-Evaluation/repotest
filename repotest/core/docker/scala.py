@@ -182,6 +182,31 @@ class ScalaDockerRepo(AbstractDockerRepo):
         
         return volumes
     
+    def _merge_reports(self, reports: list[Dict[str, object]]) -> Dict[str, object]:
+        if not reports:
+            return {}
+        
+        merged_result = {
+            "tests": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+        }
+        
+        for report in reports:
+            if "tests" in report:
+                tests = cast(list[Dict[str, object]], report.get("tests", []))
+                merged_result["tests"].extend(tests)
+            
+            summary = cast(Dict[str, int], report.get("summary", {}))
+            merged_result["summary"]["total"] += int(summary.get("total", 0))
+            merged_result["summary"]["passed"] += int(summary.get("passed", 0))
+            merged_result["summary"]["failed"] += int(summary.get("failed", 0))
+            merged_result["summary"]["skipped"] += int(summary.get("skipped", 0))
+            merged_result["summary"]["errors"] += int(summary.get("errors", 0))
+        
+        merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
+        
+        return merged_result
+    
     def build_env(self, command: str = "sbt compile", timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
                   stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
         self.container_name = self.default_container_name
@@ -254,10 +279,6 @@ class ScalaDockerRepo(AbstractDockerRepo):
     def run_test(self, command: str = "sbt test", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
         
-        if not self.was_build:
-            logger.info("Building environment before running tests")
-            self.build_env(command="sbt compile", timeout=DEFAULT_BUILD_TIMEOUT_INT, commit_image=True, stop_container=True)
-        
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
@@ -276,7 +297,8 @@ class ScalaDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        test_results = {}
+        parsed_reports = []
+        report_files_found = set()
         
         report_search_paths = [
             (os.path.join(self.cache_folder, "target"), True),
@@ -296,23 +318,22 @@ class ScalaDockerRepo(AbstractDockerRepo):
                     for filename in files:
                         if filename.endswith(".xml") and ("TEST-" in filename or "test" in filename.lower()):
                             report_path = os.path.join(root, filename)
-                            parsed_report = parse_sbt_json_report(report_path)
-                            if isinstance(parsed_report, dict) and cast(Dict, parsed_report).get("summary", {}).get("total", 0) > 0:
-                                test_results = parsed_report
-                                break
-                    if test_results:
-                        break
+                            if report_path not in report_files_found:
+                                parsed_report = parse_sbt_json_report(report_path)
+                                if isinstance(parsed_report, dict) and cast(Dict, parsed_report).get("summary", {}).get("total", 0) > 0:
+                                    parsed_reports.append(parsed_report)
+                                    report_files_found.add(report_path)
             elif os.path.isdir(search_path):
                 for filename in os.listdir(search_path):
                     if filename.endswith(".xml") and ("TEST-" in filename or "test" in filename.lower()):
                         report_path = os.path.join(search_path, filename)
-                        parsed_report = parse_sbt_json_report(report_path)
-                        if isinstance(parsed_report, dict) and cast(Dict, parsed_report).get("summary", {}).get("total", 0) > 0:
-                            test_results = parsed_report
-                            break
-            
-            if test_results:
-                break
+                        if report_path not in report_files_found:
+                            parsed_report = parse_sbt_json_report(report_path)
+                            if isinstance(parsed_report, dict) and cast(Dict, parsed_report).get("summary", {}).get("total", 0) > 0:
+                                parsed_reports.append(parsed_report)
+                                report_files_found.add(report_path)
+
+        test_results = self._merge_reports(parsed_reports)
         
         if not test_results and self.stdout:
             logger.info("XML reports not found, parsing stdout as fallback")

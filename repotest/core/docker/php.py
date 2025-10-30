@@ -134,6 +134,35 @@ class PhpDockerRepo(AbstractDockerRepo):
         
         return volumes
     
+    def _merge_reports(self, reports: list[Dict[str, object]]) -> Dict[str, object]:
+        if not reports:
+            return {}
+        
+        merged_result = {
+            "tests": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+        }
+        
+        for report in reports:
+            if "tests" in report:
+                tests = report.get("tests")
+                if isinstance(tests, list):
+                    merged_result["tests"].extend(tests)
+            
+            summary = report.get("summary") or {}
+            if not isinstance(summary, dict):
+                logger.debug("Skipping non-dict summary value: %r", summary)
+                summary = {}
+            merged_result["summary"]["total"] += int(summary.get("total", 0) or 0)
+            merged_result["summary"]["passed"] += int(summary.get("passed", 0) or 0)
+            merged_result["summary"]["failed"] += int(summary.get("failed", 0) or 0)
+            merged_result["summary"]["skipped"] += int(summary.get("skipped", 0) or 0)
+            merged_result["summary"]["errors"] += int(summary.get("errors", 0) or 0)
+        
+        merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
+        
+        return merged_result
+    
     def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
                   stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
         self.container_name = self.default_container_name
@@ -142,11 +171,6 @@ class PhpDockerRepo(AbstractDockerRepo):
                            volumes=volumes, working_dir="/run_dir")
         
         try:
-            self.timeout_exec_run(
-                f"sh -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
-            
             result = self.timeout_exec_run(
                 "sh -c 'cat /run_dir/composer.json 2>/dev/null || echo \"{}\"'",
                 timeout=30
@@ -173,7 +197,7 @@ class PhpDockerRepo(AbstractDockerRepo):
         
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"sh -c '{command}'", timeout=timeout)
+            self.timeout_exec_run(f"sh -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
         except TimeOutException:
             self.return_code = 2
             self.stderr += b"Timeout exception"
@@ -223,21 +247,9 @@ class PhpDockerRepo(AbstractDockerRepo):
     def run_test(self, command: str = "vendor/bin/phpunit", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
         
-        if not self.was_build:
-            logger.info("Building environment before running tests")
-            self.build_env(command="composer install", timeout=DEFAULT_BUILD_TIMEOUT_INT, commit_image=True, stop_container=True)
-        
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
-        
-        try:
-            self.timeout_exec_run(
-                f"sh -c 'mkdir -p /run_dir/test-results'",
-                timeout=30
-            )
-        except Exception as e:
-            logger.warning(f"Failed to create test-results directory: {e}")
         
         try:
             self.evaluation_time = time.time()
@@ -246,7 +258,7 @@ class PhpDockerRepo(AbstractDockerRepo):
             if "phpunit" in command and "--log-junit" not in command:
                 modified_command = f"{command} --log-junit /run_dir/test-results/junit.xml"
             
-            self.timeout_exec_run(f"sh -c '{modified_command}'", timeout=timeout)
+            self.timeout_exec_run(f"sh -c 'mkdir -p /run_dir/test-results && {modified_command}'", timeout=timeout)
                 
         except TimeOutException:
             self.return_code = 2
@@ -256,42 +268,36 @@ class PhpDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        test_results = {}
-        
-        report_paths = [
-            os.path.join(self.cache_folder, "test-results/junit.xml"),
-            os.path.join(self.cache_folder, "build/logs/junit.xml"),
-            os.path.join(self.cache_folder, "tests/_output"),
-        ]
+        all_report_files = set()
         
         report_dir = os.path.join(self.cache_folder, "test-results")
         if os.path.exists(report_dir) and os.path.isdir(report_dir):
             for filename in os.listdir(report_dir):
                 if filename.endswith((".json", ".xml")):
-                    report_path = os.path.join(report_dir, filename)
-                    parsed_report = parse_php_test_report(report_path)
-                    if parsed_report:
-                        test_results = parsed_report
-                        break
+                    all_report_files.add(os.path.join(report_dir, filename))
+
+        known_paths = [
+            os.path.join(self.cache_folder, "build/logs/junit.xml"),
+            os.path.join(self.cache_folder, "tests/_output"),
+        ]
         
-        if not test_results:
-            for report_path in report_paths:
-                if os.path.exists(report_path):
-                    if os.path.isfile(report_path):
-                        parsed_report = parse_php_test_report(report_path)
-                        if parsed_report:
-                            test_results = parsed_report
-                            break
-                    elif os.path.isdir(report_path):
-                        for filename in os.listdir(report_path):
-                            if filename.endswith((".json", ".xml")):
-                                file_path = os.path.join(report_path, filename)
-                                parsed_report = parse_php_test_report(file_path)
-                                if parsed_report:
-                                    test_results = parsed_report
-                                    break
-                        if test_results:
-                            break
+        for report_path in known_paths:
+            if not os.path.exists(report_path):
+                continue
+            if os.path.isfile(report_path):
+                all_report_files.add(report_path)
+            elif os.path.isdir(report_path):
+                    for filename in os.listdir(report_path):
+                        if filename.endswith((".json", ".xml")):
+                            all_report_files.add(os.path.join(report_path, filename))
+        
+        parsed_reports = []
+        for report_file in all_report_files:
+            parsed_report = parse_php_test_report(report_file)
+            if parsed_report and parsed_report.get("summary", {}).get("total", 0) > 0:
+                parsed_reports.append(parsed_report)
+
+        test_results = self._merge_reports(parsed_reports)
         
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
