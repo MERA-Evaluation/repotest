@@ -134,7 +134,7 @@ class KotlinDockerRepo(AbstractDockerRepo):
         
         return volumes
     
-    def _merge_reports(self, reports: list[Dict[str, object]]) -> Dict[str, object]:
+    def _merge_reports(self, reports: list[Dict[str, Dict]]) -> Dict[str, object]:
         if not reports:
             return {}
         
@@ -147,12 +147,13 @@ class KotlinDockerRepo(AbstractDockerRepo):
             if "tests" in report:
                 merged_result["tests"].extend(report.get("tests", []))
             
-            summary: Dict[str, int] = report.get("summary", {})
-            merged_result["summary"]["total"] += summary.get("total", 0)
-            merged_result["summary"]["passed"] += summary.get("passed", 0)
-            merged_result["summary"]["failed"] += summary.get("failed", 0)
-            merged_result["summary"]["skipped"] += summary.get("skipped", 0)
-            merged_result["summary"]["errors"] += summary.get("errors", 0)
+            summary = report.get("summary", {})
+            if isinstance(summary, dict):
+                merged_result["summary"]["total"] += summary.get("total", 0)
+                merged_result["summary"]["passed"] += summary.get("passed", 0)
+                merged_result["summary"]["failed"] += summary.get("failed", 0)
+                merged_result["summary"]["skipped"] += summary.get("skipped", 0)
+                merged_result["summary"]["errors"] += summary.get("errors", 0)
         
         merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
         
@@ -259,10 +260,11 @@ class KotlinDockerRepo(AbstractDockerRepo):
             self._convert_std_from_bytes_to_str()
         
         all_report_files = set()
+        cache_folder = self.cache_folder if self.cache_folder is not None else "."
 
         report_dirs = [
-            os.path.join(self.cache_folder, "build/test-results/test"),
-            os.path.join(self.cache_folder, "test-results")
+            os.path.join(cache_folder, "build/test-results/test"),
+            os.path.join(cache_folder, "test-results")
         ]
         
         for report_dir in report_dirs:
@@ -272,8 +274,7 @@ class KotlinDockerRepo(AbstractDockerRepo):
                         all_report_files.add(os.path.join(report_dir, filename))
 
         known_paths = [
-            os.path.join(self.cache_folder, "test-results/junit.xml"),
-            os.path.join(self.cache_folder, "build/test-results/test/TEST-junit-jupiter.xml"),
+            os.path.join(cache_folder, "build/test-results/test/TEST-junit-jupiter.xml"),
         ]
         
         for report_path in known_paths:

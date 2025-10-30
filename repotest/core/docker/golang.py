@@ -221,6 +221,34 @@ class GoLangDockerRepo(AbstractDockerRepo):
         
         return volumes
     
+    def _merge_reports(self, reports: list[Dict[str, dict]]) -> Dict[str, object]:
+        if not reports:
+            return {}
+        
+        merged_result = {
+            "tests": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0},
+            "packages": {}
+        }
+        
+        for report in reports:
+            if "tests" in report:
+                merged_result["tests"].extend(report.get("tests", []))
+            
+            if "packages" in report:
+                 merged_result["packages"].update(report.get("packages", {}))
+            
+            summary = report.get("summary", {})
+            merged_result["summary"]["total"] += summary.get("total", 0)
+            merged_result["summary"]["passed"] += summary.get("passed", 0)
+            merged_result["summary"]["failed"] += summary.get("failed", 0)
+            merged_result["summary"]["skipped"] += summary.get("skipped", 0)
+            merged_result["summary"]["errors"] += summary.get("errors", 0)
+        
+        merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
+        
+        return merged_result
+    
     def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
                   stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
         self.container_name = self.default_container_name
@@ -317,23 +345,30 @@ class GoLangDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        test_results = {}
-
+        all_report_files = set()
         cache_folder = self.cache_folder if self.cache_folder is not None else "."
         
-        json_report_path = os.path.join(cache_folder, "test-results/go-test.json")
-        if os.path.exists(json_report_path) and os.path.isfile(json_report_path):
-            test_results = parse_go_test_report(json_report_path)
+        report_dir = os.path.join(cache_folder, "test-results")
+        if os.path.exists(report_dir) and os.path.isdir(report_dir):
+            for filename in os.listdir(report_dir):
+                if filename.endswith((".json", ".xml")):
+                    all_report_files.add(os.path.join(report_dir, filename))
         
-        if not test_results:
-            xml_report_path = os.path.join(cache_folder, "test-results/junit.xml")
-            if os.path.exists(xml_report_path) and os.path.isfile(xml_report_path):
-                test_results = parse_go_test_report(xml_report_path)
+        known_paths = [
+            os.path.join(cache_folder, "gotest_results.jsonl"),
+        ]
+        
+        for report_path in known_paths:
+            if os.path.exists(report_path) and os.path.isfile(report_path):
+                 all_report_files.add(report_path)
 
-        if not test_results:
-            jsonl_report_path = os.path.join(cache_folder, "gotest_results.jsonl")
-            if os.path.exists(jsonl_report_path) and os.path.isfile(jsonl_report_path):
-                 test_results = parse_go_test_report(jsonl_report_path)
+        parsed_reports = []
+        for report_file in all_report_files:
+            parsed_report = parse_go_test_report(report_file)
+            if isinstance(parsed_report, dict) and parsed_report.get("summary", {}).get("total", 0) > 0:
+                parsed_reports.append(parsed_report)
+
+        test_results = self._merge_reports(parsed_reports)
         
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()

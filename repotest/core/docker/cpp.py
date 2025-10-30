@@ -144,6 +144,31 @@ class CppDockerRepo(AbstractDockerRepo):
         
         return volumes
     
+    def _merge_reports(self, reports: list[Dict[str, object]]) -> Dict[str, object]:
+        if not reports:
+            return {}
+        
+        merged_result = {
+            "tests": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+        }
+        
+        for report in reports:
+            if "tests" in report:
+                merged_result["tests"].extend(report.get("tests", []))
+            
+            summary = report.get("summary", {})
+            if isinstance(summary, dict):
+                merged_result["summary"]["total"] += summary.get("total", 0)
+                merged_result["summary"]["passed"] += summary.get("passed", 0)
+                merged_result["summary"]["failed"] += summary.get("failed", 0)
+                merged_result["summary"]["skipped"] += summary.get("skipped", 0)
+                merged_result["summary"]["errors"] += summary.get("errors", 0)
+        
+        merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
+        
+        return merged_result
+    
     def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
                   stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
         self.container_name = self.default_container_name
@@ -244,29 +269,35 @@ class CppDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        test_results = {}
-        
+        all_report_files = set()
         cache_folder = self.cache_folder if self.cache_folder is not None else "."
         
-        junit_report_path = os.path.join(cache_folder, "test-results/junit.xml")
-        if os.path.exists(junit_report_path) and os.path.isfile(junit_report_path):
-            test_results = parse_cpp_test_report(junit_report_path)
+        report_dir = os.path.join(cache_folder, "test-results")
+        if os.path.exists(report_dir) and os.path.isdir(report_dir):
+            for filename in os.listdir(report_dir):
+                if filename.endswith((".json", ".xml")):
+                    all_report_files.add(os.path.join(report_dir, filename))
 
-        if not test_results:
-            testing_dir = os.path.join(cache_folder, "Testing")
-            if os.path.exists(testing_dir) and os.path.isdir(testing_dir):
-                tag_file = os.path.join(testing_dir, "TAG")
-                if os.path.exists(tag_file):
-                    try:
-                        with open(tag_file, "r") as f:
-                            tag = f.readline().strip()
-                            test_xml = os.path.join(testing_dir, tag, "Test.xml")
-                            if os.path.exists(test_xml):
-                                parsed_report = parse_cpp_test_report(test_xml)
-                                if parsed_report:
-                                    test_results = parsed_report
-                    except Exception as e:
-                        logger.warning(f"Failed to read CTest results: {e}")
+        testing_dir = os.path.join(cache_folder, "Testing")
+        if os.path.exists(testing_dir) and os.path.isdir(testing_dir):
+            tag_file = os.path.join(testing_dir, "TAG")
+            if os.path.exists(tag_file):
+                try:
+                    with open(tag_file, "r") as f:
+                        tag = f.readline().strip()
+                        test_xml = os.path.join(testing_dir, tag, "Test.xml")
+                        if os.path.exists(test_xml) and os.path.isfile(test_xml):
+                            all_report_files.add(test_xml)
+                except Exception as e:
+                    logger.warning(f"Failed to read CTest results: {e}")
+        
+        parsed_reports = []
+        for report_file in all_report_files:
+            parsed_report = parse_cpp_test_report(report_file)
+            if parsed_report and parsed_report.get("summary", {}).get("total", 0) > 0:
+                parsed_reports.append(parsed_report)
+        
+        test_results = self._merge_reports(parsed_reports)
         
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
