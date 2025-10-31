@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from functools import cached_property
-from typing import Dict, Literal, Optional
+from typing import Dict, Optional
 from docker.errors import APIError, ImageNotFound
 from repotest.constants import DEFAULT_BUILD_TIMEOUT_INT, DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT
 from repotest.core.docker.base import AbstractDockerRepo
@@ -33,7 +33,8 @@ def parse_go_test_report(report_path: str) -> Dict[str, object]:
                     "passed": 0,
                     "failed": 0,
                     "skipped": 0,
-                    "errors": 0
+                    "errors": 0,
+                    "collected": 0
                 }
             }
             
@@ -79,14 +80,14 @@ def parse_go_test_report(report_path: str) -> Dict[str, object]:
                 - result["summary"]["errors"] 
                 - result["summary"]["skipped"]
             )
+            result["summary"]["collected"] = result["summary"]["total"]
             result["status"] = "passed" if (result["summary"]["failed"] + result["summary"]["errors"]) == 0 else "failed"
             
             return result
             
-    except (json.JSONDecodeError, Exception) as e:
+    except Exception as e:
         logger.warning(f"Failed to parse test report: {e}")
         return {}
-
 
 def _parse_go_json(content: str) -> Dict[str, object]:
     lines = content.strip().split('\n')
@@ -101,9 +102,12 @@ def _parse_go_json(content: str) -> Dict[str, object]:
             "passed": 0,
             "failed": 0,
             "skipped": 0,
-            "errors": 0
+            "errors": 0,
+            "collected": 0
         }
     }
+    
+    status_map = {"pass": "passed", "fail": "failed", "skip": "skipped"}
     
     for line in lines:
         if not line.strip():
@@ -122,8 +126,8 @@ def _parse_go_json(content: str) -> Dict[str, object]:
                         "status": None,
                         "elapsed": 0
                     }
-                if action in ("pass", "fail", "skip"):
-                    packages[package]["status"] = action
+                if action in status_map:
+                    packages[package]["status"] = status_map[action]
                     packages[package]["elapsed"] = elapsed
             
             if test:
@@ -162,23 +166,34 @@ def _parse_go_json(content: str) -> Dict[str, object]:
         if test_info.get("output"):
             test_info["message"] = "".join(test_info["output"])
             test_info["details"] = test_info["message"]
-        result["tests"].append({
-            "name": test_info["name"],
-            "classname": test_info["classname"],
-            "time": test_info["time"],
-            "status": test_info["status"],
-            "message": test_info.get("message", ""),
-            "details": test_info.get("details", "")
-        })
+        result["tests"].append(test_info)
     
-    result["status"] = "passed" if result["summary"]["failed"] == 0 and result["summary"]["total"] > 0 else ("failed" if result["summary"]["failed"] > 0 else "unknown")
+    if result["summary"]["total"] > 0:
+        result["status"] = "passed" if result["summary"]["failed"] == 0 else "failed"
+    else:
+        passed = 0
+        failed = 0
+        skipped = 0
+        for p in packages.values():
+            status = p["status"]
+            if status == "passed":
+                passed += 1
+            elif status == "failed":
+                failed += 1
+            elif status == "skipped":
+                skipped += 1
+        result["summary"]["total"] = len(packages)
+        result["summary"]["passed"] = passed
+        result["summary"]["failed"] = failed
+        result["summary"]["skipped"] = skipped
+        result["status"] = "unknown"
+    
+    result["summary"]["collected"] = result["summary"]["total"]
     result["packages"] = packages
     
     return result
 
-
 class GoLangDockerRepo(AbstractDockerRepo):
-    
     def __init__(self, 
                  repo: str, 
                  base_commit: str,
@@ -189,10 +204,6 @@ class GoLangDockerRepo(AbstractDockerRepo):
                 ) -> None:
         super().__init__(repo=repo, base_commit=base_commit, default_cache_folder=default_cache_folder,
                          default_url=default_url, image_name=image_name, cache_mode=cache_mode)
-        self.stdout = ""
-        self.stderr = ""
-        self.std = ""
-        self.return_code = 0
     
     @cached_property
     def _user_go_cache(self) -> str:
@@ -233,7 +244,7 @@ class GoLangDockerRepo(AbstractDockerRepo):
         
         merged_result = {
             "tests": [],
-            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0},
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "collected": 0},
             "packages": {}
         }
         
@@ -242,7 +253,7 @@ class GoLangDockerRepo(AbstractDockerRepo):
                 merged_result["tests"].extend(report.get("tests", []))
             
             if "packages" in report:
-                 merged_result["packages"].update(report.get("packages", {}))
+                merged_result["packages"].update(report.get("packages", {}))
             
             summary = report.get("summary", {})
             merged_result["summary"]["total"] += summary.get("total", 0)
@@ -250,12 +261,13 @@ class GoLangDockerRepo(AbstractDockerRepo):
             merged_result["summary"]["failed"] += summary.get("failed", 0)
             merged_result["summary"]["skipped"] += summary.get("skipped", 0)
             merged_result["summary"]["errors"] += summary.get("errors", 0)
+            merged_result["summary"]["collected"] += summary.get("collected", 0)
         
         merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
         
         return merged_result
     
-    def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
+    def build_env(self, command: str = "go build ./...", timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
                   stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
         self.container_name = self.default_container_name
         volumes = self._setup_container_volumes(workdir="/run_dir")
@@ -263,29 +275,16 @@ class GoLangDockerRepo(AbstractDockerRepo):
                            volumes=volumes, working_dir="/run_dir")
         
         try:
-            
-            self.timeout_exec_run(
-                f"sh -c 'go install github.com/jstemmer/go-junit-report/v2@latest || true'",
-                timeout=120
-            )
-        except Exception as e:
-            logger.warning(f"Failed to install go-junit-report: {e}")
-        
-        command = "ulimit -n 65535;\n" + command
-        
-        try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"sh -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
+            self.timeout_exec_run(f"sh -c '{command}'", timeout=timeout)
         except TimeOutException:
             self.return_code = 2
-            self.stderr += b"Timeout exception"
-            self._FALL_WITH_TIMEOUT_EXCEPTION = True
+            self.stderr = b"Timeout exception"
+            raise TimeOutException(f"Command timed out after {timeout}s.")
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        if self._FALL_WITH_TIMEOUT_EXCEPTION:
-            raise TimeOutException(f"Command timed out after {timeout}s.")
         if commit_image:
             self._commit_container_image()
         if push_image:
@@ -316,7 +315,7 @@ class GoLangDockerRepo(AbstractDockerRepo):
     def was_build(self) -> bool:
         return self._image_exists(self.default_image_name)
     
-    def __call__(self, command_build: str, command_test: str, timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
+    def __call__(self, command_build: str = "go build ./...", command_test: str = "go test -json ./...", timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
                  timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT) -> Dict[str, object]:
         if not self.was_build:
             self.build_env(command=command_build, timeout=timeout_build)
@@ -336,61 +335,61 @@ class GoLangDockerRepo(AbstractDockerRepo):
             if "go test" in command and "-json" not in command:
                 modified_command = command.replace("go test", "go test -json")
             
-            full_command = f"mkdir -p /run_dir/test-results && ({modified_command} 2>&1 | tee /run_dir/test-results/go-test.json | go-junit-report > /run_dir/test-results/junit.xml || {modified_command} > /run_dir/test-results/go-test.json)"
+            full_command = f"mkdir -p /run_dir/test-results && if which go-junit-report >/dev/null 2>&1; then {modified_command} | tee /run_dir/test-results/go-test.json | go-junit-report > /run_dir/test-results/junit.xml; else {modified_command} > /run_dir/test-results/go-test.json; fi"
             
             self.timeout_exec_run(
                 f"sh -c '{full_command}'",
                 timeout=timeout
             )
-                
         except TimeOutException:
             self.return_code = 2
             self.stderr = b"Timeout exception"
-            self._FALL_WITH_TIMEOUT_EXCEPTION = True
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
         all_report_files = set()
-        cache_folder = self.cache_folder if self.cache_folder is not None else "."
-        
-        report_dir = os.path.join(cache_folder, "test-results")
+        report_dir = os.path.join(self.cache_folder, "test-results")
         if os.path.exists(report_dir) and os.path.isdir(report_dir):
             for filename in os.listdir(report_dir):
                 if filename.endswith((".json", ".xml")):
                     all_report_files.add(os.path.join(report_dir, filename))
         
         known_paths = [
-            os.path.join(cache_folder, "gotest_results.jsonl"),
+            os.path.join(self.cache_folder, "gotest_results.jsonl"),
         ]
         
         for report_path in known_paths:
-            if os.path.exists(report_path) and os.path.isfile(report_path):
-                 all_report_files.add(report_path)
+            if os.path.exists(report_path):
+                all_report_files.add(report_path)
 
         parsed_reports = []
         for report_file in all_report_files:
             parsed_report = parse_go_test_report(report_file)
-            if isinstance(parsed_report, dict) and parsed_report.get("summary", {}).get("total", 0) > 0:
-                parsed_reports.append(parsed_report)
+            if isinstance(parsed_report, dict):
+                summary = parsed_report.get("summary", {})
+                if isinstance(summary, dict):
+                    total = summary.get("total", 0)
+                else:
+                    total = 0
+                if total > 0:
+                    parsed_reports.append(parsed_report)
 
         test_results = self._merge_reports(parsed_reports)
         
-        if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
+        if stop_container:
             self.stop_container()
         
         return self._format_results(test_json=test_results)
     
     def _format_results(self, test_json: Optional[Dict] = None) -> Dict[str, object]:
-        if test_json and "summary" in test_json:
-            parser_result = test_json
-        else:
-            parser_result = {
-                "tests": [],
-                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
-                "status": "unknown",
-                "packages": {}
-            }
+        default_result = {
+            "tests": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "collected": 0},
+            "status": "unknown",
+            "packages": {}
+        }
+        parser_result = test_json or default_result
         
         return {
             "stdout": self.stdout,
@@ -398,7 +397,7 @@ class GoLangDockerRepo(AbstractDockerRepo):
             "std": self.std,
             "returncode": self.return_code,
             "parser": parser_result,
-            "report": test_json or {},
+            "report": parser_result,
             "time": self.evaluation_time,
             "run_id": self.run_id
         }
