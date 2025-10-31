@@ -2,12 +2,31 @@
 import pytest
 from repotest.core.docker.golang import GoLangDockerRepo
 
-@pytest.fixture(params=["download", "shared", "local", "volume"])
-def repo(request):
+def pytest_addoption(parser):
+    parser.addoption(
+        "--slow", 
+        action="store_true", 
+        default=False, 
+        help="Run slow tests with all cache modes"
+    )
+
+
+def pytest_generate_tests(metafunc):
+    if "cache_mode" in metafunc.fixturenames:
+        if metafunc.config.getoption("--slow"):
+            # Run with all cache modes
+            metafunc.parametrize("cache_mode", ["download", "shared", "local", "volume"])
+        else:
+            # Run only with download mode
+            metafunc.parametrize("cache_mode", ["download"])
+
+
+@pytest.fixture
+def repo(cache_mode):
     repo_instance = GoLangDockerRepo(
         repo="TheAlgorithms/Go",
         base_commit="5ba447ec5ff3d1213de65b92e726ee74c5d5cc19",
-        cache_mode=request.param,
+        cache_mode=cache_mode,
         image_name="golang:latest"
     )
     repo_instance.clean()
