@@ -12,13 +12,12 @@ from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
                                 DOCKER_PYTHON_DEFAULT_IMAGE)
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
-from repotest.parsers.python.pytest_stdout import parse_pytest_stdout
+from repotest.parsers.python.javascript_stout import parse_test_stdout
 from repotest.core.docker.types import CacheMode
 import xmltodict
 
 logger = logging.getLogger("repotest")
-
-
+    
 
 class JavaScriptDockerRepo(AbstractDockerRepo):
     """A class for managing and testing Python repositories in a Docker container."""
@@ -154,12 +153,12 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
         return command if command.startswith(prefix) else prefix + command
     
     def read_mocha_xml(self):
-        fn = os.path.join(self.cache_folder, 'test-results.xml')
-        if not os.path.exists(fn):
+        fn_mocha = os.path.join(self.cache_folder, 'test-results.xml')
+        if not os.path.exists(fn_mocha):
             logger.critical("file %s not exist (full: %s)", "test-results.xml", fn)
             return {}
         
-        dct = xmltodict.parse(open(fn, "r").read())
+        dct = xmltodict.parse(open(fn_mocha, "r").read())
         assert 'summary' not in dct
 
         n_total = int(dct['testsuites']['@tests'])
@@ -173,7 +172,54 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
         
         # I want to have summary first order
         return {"summary": dct_summary, **dct}
+
     
+    def read_jest_json(self):
+        fn_jest = os.path.join(self.cache_folder, 'jest-results.json')
+        if not os.path.exists(fn_jest):
+            logger.critical("file %s not exist (full: %s)", "test-results.xml", fn)
+            return {}
+
+        dct = json.load(open(fn_jest, "r"))
+        assert 'summary' not in dct
+
+        n_total = dct['numTotalTests']
+        n_passed = dct['numPassedTests']
+        n_failed = dct['numFailedTests'] + dct['numPendingTests'] + dct['numTodoTests']
+
+        dct_summary = {'total': n_total,
+                       'passed': n_passed,
+                       'failed': n_failed,
+                       'collected': n_total
+                    }
+
+        # I want to have summary first order
+        return {"summary": dct_summary, **dct}
+
+    def read_jest_or_mocha(self):
+        fn_mocha = os.path.join(self.cache_folder, 'test-results.xml')
+        fn_jest  = os.path.join(self.cache_folder, 'jest-results.json')
+
+        test_exist_mocha = os.path.exists(fn_mocha)
+        test_exist_jest = os.path.exists(fn_jest)
+
+        if test_exist_mocha & test_exist_jest:
+            logger.critical("Found mocha and jest mocha=%s, jest=%s", fn_mocha, fn_jest)
+            return {"mocha": self.read_mocha_xml(),
+                    "jest": self.read_jest_json(),
+                    }
+        elif not (test_exist_mocha | test_exist_jest):
+            logger.critical("There are no mocha or jest results")
+            return {}
+        elif test_exist_mocha:
+            logger.debug("Find mocha test")
+            return self.read_mocha_xml()
+        elif test_exist_jest:
+            logger.debug("Find jest test")
+            return self.read_jest_json()
+        
+        raise ValueError("Unexpected behaviour, not all corner cases were processeded")
+
     def run_test(
         self,
         command: str = "npm test -- --reporter mocha-junit-reporter",
@@ -203,7 +249,7 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        report = self.read_mocha_xml()
+        report = self.read_jest_or_mocha()
 
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
@@ -217,7 +263,7 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
             "stderr": self.stderr,
             "std": self.std,
             "returncode": self.return_code,
-            "parser": parse_pytest_stdout(self.stdout),
+            "parser": parse_test_stdout(self.stdout),
             "report": report,
             "time": self.evaluation_time,
             "run_id": self.run_id,
