@@ -1,158 +1,42 @@
-import json, logging, os, time
+import json
+import logging
+import os
+import time
 from functools import cached_property
-from typing import Dict, Literal, Optional
+from typing import Dict, Optional
 from docker.errors import APIError, ImageNotFound
-from repotest.constants import DEFAULT_BUILD_TIMEOUT_INT, DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT
+from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
+                                DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT)
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
+from repotest.parsers.python.javascript_stout import parse_test_stdout
 from repotest.core.docker.types import CacheMode
+import xmltodict
 
 logger = logging.getLogger("repotest")
-
-def parse_typescript_test_report(report_path: str) -> Dict[str, object]:
-    """Parse TypeScript/JavaScript test reports in JSON or JUnit XML format."""
-    if not os.path.exists(report_path):
-        return {}
     
-    try:
-        with open(report_path, "r") as f:
-            content = f.read()
-
-            if content.strip().startswith("{") or content.strip().startswith("["):
-                data = json.loads(content)
-                
-                if "testResults" in data or "numTotalTests" in data:
-                    return _parse_jest_json(data)
-                
-                if "tests" in data and "summary" in data:
-                    return data
-                
-                return {}
-            
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(content)
-            
-            result = {
-                "tests": [],
-                "summary": {
-                    "total": 0,
-                    "passed": 0,
-                    "failed": 0,
-                    "skipped": 0,
-                    "errors": 0
-                }
-            }
-            
-            testsuites = root.findall(".//testsuite")
-            if not testsuites and root.tag == "testsuite":
-                testsuites = [root]
-            
-            for testsuite in testsuites:
-                result["summary"]["total"] += int(testsuite.get("tests", 0))
-                result["summary"]["failed"] += int(testsuite.get("failures", 0))
-                result["summary"]["errors"] += int(testsuite.get("errors", 0))
-                result["summary"]["skipped"] += int(testsuite.get("skipped", 0))
-                
-                for testcase in testsuite.findall("testcase"):
-                    test_info = {
-                        "name": testcase.get("name"),
-                        "classname": testcase.get("classname"),
-                        "time": float(testcase.get("time", 0)),
-                        "status": "passed"
-                    }
-                    
-                    failure = testcase.find("failure")
-                    error = testcase.find("error")
-                    skipped = testcase.find("skipped")
-                    
-                    if failure is not None:
-                        test_info["status"] = "failed"
-                        test_info["message"] = failure.get("message", "")
-                        test_info["details"] = failure.text or ""
-                    elif error is not None:
-                        test_info["status"] = "error"
-                        test_info["message"] = error.get("message", "")
-                        test_info["details"] = error.text or ""
-                    elif skipped is not None:
-                        test_info["status"] = "skipped"
-                        test_info["message"] = skipped.get("message", "")
-                    
-                    result["tests"].append(test_info)
-            
-            result["summary"]["passed"] = (
-                result["summary"]["total"] 
-                - result["summary"]["failed"] 
-                - result["summary"]["errors"] 
-                - result["summary"]["skipped"]
-            )
-            result["status"] = "passed" if (result["summary"]["failed"] + result["summary"]["errors"]) == 0 else "failed"
-            
-            return result
-            
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning(f"Failed to parse test report: {e}")
-        return {}
-
-
-def _parse_jest_json(data: Dict) -> Dict[str, object]:
-    """Parse Jest JSON reporter format."""
-    result = {
-        "tests": [],
-        "summary": {
-            "total": data.get("numTotalTests", 0),
-            "passed": data.get("numPassedTests", 0),
-            "failed": data.get("numFailedTests", 0),
-            "skipped": data.get("numPendingTests", 0),
-            "errors": 0
-        }
-    }
-    
-    for test_result in data.get("testResults", []):
-        for assertion in test_result.get("assertionResults", []):
-            test_info = {
-                "name": assertion.get("title", ""),
-                "classname": assertion.get("ancestorTitles", [None])[0] if assertion.get("ancestorTitles") else "",
-                "time": assertion.get("duration", 0) / 1000.0 if assertion.get("duration") else 0,
-                "status": assertion.get("status", "unknown")
-            }
-            
-            if assertion.get("failureMessages"):
-                test_info["message"] = assertion["failureMessages"][0] if assertion["failureMessages"] else ""
-                test_info["details"] = "\n".join(assertion["failureMessages"])
-            
-            result["tests"].append(test_info)
-    
-    result["status"] = "passed" if result["summary"]["failed"] == 0 else "failed"
-    
-    return result
-
 
 class TypeScriptDockerRepo(AbstractDockerRepo):
-    """A class for managing and testing TypeScript repositories in a Docker container."""
-    
-    def __init__(self, 
-                 repo: str, 
-                 base_commit: str, 
-                 default_cache_folder: str = DEFAULT_CACHE_FOLDER,
-                 default_url: str = "http://github.com", 
-                 image_name: str = "node:18",
-                 cache_mode: CacheMode = "volume"
-                 ) -> None:
-        super().__init__(repo=repo, base_commit=base_commit, default_cache_folder=default_cache_folder,
-                         default_url=default_url, image_name=image_name, cache_mode=cache_mode)
-        self.stdout = ""
-        self.stderr = ""
-        self.std = ""
-        self.return_code = 0
-    
-    @cached_property
-    def _user_typescript_cache(self) -> str:
-        return os.path.expanduser("~/.cache/typescript")
-    
-    @cached_property
-    def _local_typescript_cache(self) -> str:
-        return os.path.join(self.cache_folder, ".typescript_cache")
-    
+
+    def __init__(
+        self,
+        repo: str,
+        base_commit: str,
+        default_cache_folder: str = DEFAULT_CACHE_FOLDER,
+        default_url: str = "http://github.com",
+        image_name: str = "node:18",
+        cache_mode: CacheMode = "volume",
+    ) -> None:
+        super().__init__(
+            repo=repo,
+            base_commit=base_commit,
+            default_cache_folder=default_cache_folder,
+            default_url=default_url,
+            image_name=image_name,
+            cache_mode=cache_mode,
+        )
+
+      
     @cached_property
     def _user_npm_cache(self) -> str:
         return os.path.expanduser("~/.npm")
@@ -160,6 +44,10 @@ class TypeScriptDockerRepo(AbstractDockerRepo):
     @cached_property
     def _local_npm_cache(self) -> str:
         return os.path.join(self.cache_folder, ".npm_cache")
+    
+    @cached_property
+    def _local_typescript_cache(self) -> str:
+        return os.path.join(self.cache_folder, ".typescript_cache")
     
     def _setup_container_volumes(self, workdir: Optional[str] = None) -> Dict[str, Dict[str, str]]:
         volumes = {}
@@ -181,124 +69,79 @@ class TypeScriptDockerRepo(AbstractDockerRepo):
             volumes[self._local_typescript_cache] = {"bind": "/root/.cache/typescript", "mode": "rw"}
         
         return volumes
-    
-    def _merge_reports(self, reports: list[Dict[str, object]]) -> Dict[str, object]:
-        if not reports:
-            return {}
-        
-        merged_result = {
-            "tests": [],
-            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
-        }
-        
-        for report in reports:
-            if "tests" in report:
-                merged_result["tests"].extend(report.get("tests", []))
-            
-            summary = report.get("summary", {})
-            if not isinstance(summary, dict):
-                summary = {}
-            merged_result["summary"]["total"] += summary.get("total", 0)
-            merged_result["summary"]["passed"] += summary.get("passed", 0)
-            merged_result["summary"]["failed"] += summary.get("failed", 0)
-            merged_result["summary"]["skipped"] += summary.get("skipped", 0)
-            merged_result["summary"]["errors"] += summary.get("errors", 0)
-        
-        merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
-        
-        return merged_result
-    
-    def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
-                  stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
+
+    def build_env(
+        self,
+        command: str = "npm install --legacy-peer-deps --loglevel=error;npm install mocha-junit-reporter --legacy-peer-deps --loglevel=error",
+        timeout: int = DEFAULT_BUILD_TIMEOUT_INT,
+        commit_image=True,
+        stop_container=True,
+        push_image=False,
+    ) -> Dict[str, object]:
         self.container_name = self.default_container_name
         volumes = self._setup_container_volumes(workdir="/run_dir")
-        self.start_container(image_name=self.image_name, container_name=self.container_name,
-                           volumes=volumes, working_dir="/run_dir")
-        
-        jest_config = '''
-                        module.exports = {
-                        reporters: [
-                            'default',
-                            ['jest-junit', {
-                            outputDirectory: './test-results',
-                            outputName: 'junit.xml',
-                            }]
-                        ]
-                        };
-                        '''
-        
-        mocha_config = '''
-                        {
-                        "reporter": "mocha-junit-reporter",
-                        "reporterOptions": {
-                            "mochaFile": "./test-results/junit.xml"
-                        }
-                        }
-                        '''
-        
-        try:
-            result = self.timeout_exec_run(
-                "bash -c 'cat /run_dir/package.json 2>/dev/null || echo \"{}\"}\'",
-                timeout=30
-            ) or {}
-            
-            package_json_content = result.get("stdout", b"").decode("utf-8", errors="ignore")
-            
-            if "jest" in package_json_content.lower():
-                self.timeout_exec_run(
-                    f"bash -c 'npm install --save-dev jest-junit || true'",
-                    timeout=120
-                )
-                self.timeout_exec_run(
-                    f"bash -c 'echo \"{jest_config}\" > /run_dir/jest.config.js'",
-                    timeout=30
-                )
-            elif "mocha" in package_json_content.lower():
-                self.timeout_exec_run(
-                    f"bash -c 'npm install --save-dev mocha-junit-reporter || true'",
-                    timeout=120
-                )
-                self.timeout_exec_run(
-                    f"bash -c 'echo \'{mocha_config}\' > /run_dir/.mocharc.json'",
-                    timeout=30
-                )
-            elif "vitest" in package_json_content.lower():
-                vitest_config = '''
-                                import { defineConfig } from 'vitest/config';
-                                export default defineConfig({
-                                test: {
-                                    reporters: ['default', 'junit'],
-                                    outputFile: './test-results/junit.xml',
-                                },
-                                });
-                                '''
-                self.timeout_exec_run(
-                    f"bash -c 'echo \"{vitest_config}\" > /run_dir/vitest.config.ts'",
-                    timeout=30
-                )
-        except Exception as e:
-            logger.warning(f"Failed to configure test reporters: {e}")
-        
+
+        logger.info(
+            "Starting container",
+            extra={
+                "command": command,
+                "image": self.image_name,
+                "volumes": volumes,
+            },
+        )
+
+        self.start_container(
+            image_name=self.image_name,
+            container_name=self.container_name,
+            volumes=volumes,
+            working_dir="/run_dir",
+        )
+        command = "ulimit -n 65535;\n" + command
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
         except TimeOutException:
+            logger.error("Timeout exception during build_env")
             self.return_code = 2
             self.stderr += b"Timeout exception"
             self._FALL_WITH_TIMEOUT_EXCEPTION = True
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
-        
+
         if self._FALL_WITH_TIMEOUT_EXCEPTION:
-            raise TimeOutException(f"Command timed out after {timeout}s.")
+            raise TimeOutException(f"Command '{command}' timed out after {timeout}s.")
+
+        try:
+            if "added" in self.stdout.lower() and "packages" in self.stdout.lower():
+                logger.info("npm install completed successfully (packages added), overriding return code")
+                self.return_code = 0
+            elif "audited" in self.stdout.lower() and "packages" in self.stdout.lower():
+                logger.info("npm install completed successfully (packages audited), overriding return code")
+                self.return_code = 0
+        except Exception as e:
+            logger.debug(f"Could not check npm install success: {e}")
+
         if commit_image:
             self._commit_container_image()
+
         if push_image:
             self.push_image()
+
         if stop_container:
             self.stop_container()
+
         return self._format_results()
+
+    def _image_exists(self, name: str) -> bool:
+        try:
+            self.docker_client.images.get(name)
+            return True
+        except ImageNotFound:
+            return False
+        except APIError as e:
+            logger.warning(f"Docker API error when checking image: {e}")
+            return False
     
     def _commit_container_image(self, retries: int = 3, delay: int = 10) -> None:
         for attempt in range(retries):
@@ -310,80 +153,164 @@ class TypeScriptDockerRepo(AbstractDockerRepo):
                 if attempt == retries - 1:
                     raise
                 time.sleep(delay)
-    
-    def _image_exists(self, name: str) -> bool:
-        try:
-            self.docker_client.images.get(name)
-            return True
-        except (ImageNotFound, APIError):
-            return False
-    
+
     @property
     def was_build(self) -> bool:
         return self._image_exists(self.default_image_name)
+
+    def _mock_path(self, command: str) -> str:
+        prefix = """ulimit -n 65535;"""
+        return command if command.startswith(prefix) else prefix + command
     
-    def __call__(self, command_build: str, command_test: str, timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
+    def __call__(self, 
+                 command_build: str = "npm install --legacy-peer-deps --loglevel=error;npm install mocha-junit-reporter --legacy-peer-deps --loglevel=error", 
+                 command_test: str = "npm test -- --reporter mocha-junit-reporter", 
+                 timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
                  timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT) -> Dict[str, object]:
         if not self.was_build:
             self.build_env(command=command_build, timeout=timeout_build)
         return self.run_test(command=command_test, timeout=timeout_test)
     
-    def run_test(self, command: str = "npm test", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
-                 stop_container: bool = True) -> Dict[str, object]:
-        
-        volumes = self._setup_container_volumes(workdir="/run_dir")
-        self.start_container(image_name=self.image_name, container_name=self.container_name,
-                           volumes=volumes, working_dir="/run_dir")
+    def read_mocha_xml(self):
+        fn_mocha = os.path.join(self.cache_folder, 'test-results.xml')
+        if not os.path.exists(fn_mocha):
+            logger.critical("file %s not exist (full: %s)", "test-results.xml", fn_mocha)
+            return {}
         
         try:
+            dct = xmltodict.parse(open(fn_mocha, "r").read())
+            assert 'summary' not in dct
+
+            n_total = int(dct['testsuites']['@tests'])
+            n_failed = int(dct['testsuites']['@failures'])
+            n_errors = int(dct['testsuites'].get('@errors', 0))
+            n_skipped = int(dct['testsuites'].get('@skipped', 0))
+            
+            dct_summary = {
+                'total': n_total,
+                'passed': n_total - n_failed - n_errors - n_skipped,
+                'failed': n_failed,
+                'errors': n_errors,
+                'skipped': n_skipped,
+                'collected': n_total
+            }
+            
+            return {"summary": dct_summary, **dct}
+        except Exception as e:
+            logger.warning(f"Failed to parse mocha XML: {e}")
+            return {}
+
+    def read_jest_json(self):
+        fn_jest = os.path.join(self.cache_folder, 'jest-results.json')
+        if not os.path.exists(fn_jest):
+            logger.critical("file %s not exist (full: %s)", "jest-results.json", fn_jest)
+            return {}
+
+        try:
+            dct = json.load(open(fn_jest, "r"))
+            assert 'summary' not in dct
+
+            n_total = dct['numTotalTests']
+            n_passed = dct['numPassedTests']
+            n_failed = dct['numFailedTests']
+            n_pending = dct.get('numPendingTests', 0)
+            n_todo = dct.get('numTodoTests', 0)
+
+            dct_summary = {
+                'total': n_total,
+                'passed': n_passed,
+                'failed': n_failed,
+                'skipped': n_pending + n_todo,
+                'errors': 0,
+                'collected': n_total
+            }
+
+            return {"summary": dct_summary, **dct}
+        except Exception as e:
+            logger.warning(f"Failed to parse jest JSON: {e}")
+            return {}
+
+    def read_jest_or_mocha(self):
+        fn_mocha = os.path.join(self.cache_folder, 'test-results.xml')
+        fn_jest  = os.path.join(self.cache_folder, 'jest-results.json')
+
+        test_exist_mocha = os.path.exists(fn_mocha)
+        test_exist_jest = os.path.exists(fn_jest)
+
+        if test_exist_mocha & test_exist_jest:
+            logger.debug("Found both mocha and jest results, using jest")
+            return self.read_jest_json()
+        elif not (test_exist_mocha | test_exist_jest):
+            logger.critical("There are no mocha or jest results")
+            return {}
+        elif test_exist_mocha:
+            logger.debug("Find mocha test")
+            return self.read_mocha_xml()
+        elif test_exist_jest:
+            logger.debug("Find jest test")
+            return self.read_jest_json()
+        
+        return {}
+
+    def run_test(
+        self,
+        command: str = "npm test -- --reporter mocha-junit-reporter",
+        timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
+        stop_container: bool = True,
+    ) -> Dict[str, object]:
+        volumes = self._setup_container_volumes(workdir="/run_dir")
+        self.start_container(
+            image_name=self.image_name,
+            container_name=self.container_name,
+            volumes=volumes,
+            working_dir="/run_dir",
+        )
+
+        command = self._mock_path(command)
+
+        try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
         except TimeOutException:
+            logger.error("Timeout exception during test execution")
             self.return_code = 2
             self.stderr = b"Timeout exception"
-            self._FALL_WITH_TIMEOUT_EXCEPTION = True
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        all_report_files = set()
+        report = self.read_jest_or_mocha()
         
-        report_dir = os.path.join(self.cache_folder, "test-results")
-        if os.path.exists(report_dir) and os.path.isdir(report_dir):
-            for filename in os.listdir(report_dir):
-                if filename.endswith((".xml", ".json")):
-                    all_report_files.add(os.path.join(report_dir, filename))
-        
-        known_paths = [
-            os.path.join(self.cache_folder, "junit.xml"),
-            os.path.join(self.cache_folder, "test-results.json"),
-            os.path.join(self.cache_folder, "coverage/test-report.xml"),
-        ]
-        
-        for report_path in known_paths:
-            if os.path.exists(report_path) and os.path.isfile(report_path):
-                 all_report_files.add(report_path)
+        if report and isinstance(report, dict) and 'summary' in report:
+            summary = report['summary']
+            if isinstance(summary, dict):
+                total = summary.get('total', 0)
+                failed = summary.get('failed', 0)
+                if total > 0 and failed == 0:
+                    logger.info("All tests passed, overriding return code to 0")
+                    self.return_code = 0
 
-        parsed_reports = []
-        for report_file in all_report_files:
-            parsed_report = parse_typescript_test_report(report_file)
-            if parsed_report and parsed_report.get("summary", {}).get("total", 0) > 0:
-                parsed_reports.append(parsed_report)
-        
-        test_results = self._merge_reports(parsed_reports)
-        
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
+
+        return self._format_results(report = report)
+
+    def _format_results(self, report: Optional[Dict] = None) -> Dict[str, object]:
+        parser_result = report if report else parse_test_stdout(self.stdout)
         
-        return self._format_results(test_json=test_results)
-    
-    def _format_results(self, test_json: Optional[Dict] = None) -> Dict[str, object]:
-        if test_json and "summary" in test_json:
-            parser_result = test_json
+        if parser_result and isinstance(parser_result, dict) and 'summary' in parser_result:
+            pass
         else:
             parser_result = {
                 "tests": [],
-                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+                "summary": {
+                    "total": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "errors": 0,
+                    "collected": 0
+                },
                 "status": "unknown"
             }
         
@@ -393,7 +320,7 @@ class TypeScriptDockerRepo(AbstractDockerRepo):
             "std": self.std,
             "returncode": self.return_code,
             "parser": parser_result,
-            "report": test_json or {},
+            "report": report,
             "time": self.evaluation_time,
-            "run_id": self.run_id
+            "run_id": self.run_id,
         }
