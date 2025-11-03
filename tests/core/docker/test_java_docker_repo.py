@@ -1,7 +1,8 @@
+# Todo: Refactor this madness
 import pytest
 from repotest.core.docker.java import JavaDockerRepo
 
-from ....fixtures.java_example import base_commit, image_name, repo_name
+from ...fixtures.java_example import base_commit, image_name, repo_name
 
 
 @pytest.fixture(params=["download", "shared", "local", "volume"])

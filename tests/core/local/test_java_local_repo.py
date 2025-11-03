@@ -1,7 +1,7 @@
 import pytest
 from repotest.core.local.java import JavaLocalRepo
 
-from ....fixtures.java_example import base_commit, repo_name
+from ...fixtures.java_example import base_commit, repo_name
 
 
 @pytest.fixture
