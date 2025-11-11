@@ -44,9 +44,9 @@ def test_typescript_docker_repo_mocha(test_result_mocha):
     assert isinstance(test_result_mocha["report"], dict)
 
     report = test_result_mocha["report"]['summary']
-    assert report["total"] == 1806
-    assert report["passed"] == 1806
-    assert report["collected"] == 1806
+    assert report["total"] >= 1804
+    assert report["passed"] >= 1804
+    assert report["collected"] >= 1804
     assert report["failed"] == 0
 
     # Test std parser

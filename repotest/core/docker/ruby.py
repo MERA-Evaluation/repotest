@@ -38,7 +38,8 @@ def parse_ruby_test_report(report_path: str) -> Dict[str, object]:
                     "passed": 0,
                     "failed": 0,
                     "skipped": 0,
-                    "errors": 0
+                    "errors": 0,
+                    "collected": 0
                 }
             }
             
@@ -84,7 +85,8 @@ def parse_ruby_test_report(report_path: str) -> Dict[str, object]:
                 - result["summary"]["errors"] 
                 - result["summary"]["skipped"]
             )
-            result["status"] = "passed" if (result["summary"]["failed"] + result["summary"]["errors"]) == 0 else "failed"
+            result["summary"]["collected"] = result["summary"]["total"]
+            result["status"] = "passed" if (result["summary"]["failed"] + result["summary"]["errors"]) == 0 and result["summary"]["total"] > 0 else "failed"
             
             return result
             
@@ -101,7 +103,8 @@ def _parse_rspec_json(data: Dict) -> Dict[str, object]:
             "passed": 0,
             "failed": 0,
             "skipped": 0,
-            "errors": 0
+            "errors": 0,
+            "collected": 0
         }
     }
     
@@ -126,6 +129,7 @@ def _parse_rspec_json(data: Dict) -> Dict[str, object]:
         
         result["tests"].append(test_info)
     
+    result["summary"]["collected"] = result["summary"]["total"]
     result["status"] = "passed" if result["summary"]["failed"] == 0 and result["summary"]["total"] > 0 else ("failed" if result["summary"]["failed"] > 0 else "unknown")
     
     return result
@@ -186,7 +190,7 @@ class RubyDockerRepo(AbstractDockerRepo):
         
         merged_result = {
             "tests": [],
-            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "collected": 0}
         }
         
         for report in reports:
@@ -200,17 +204,12 @@ class RubyDockerRepo(AbstractDockerRepo):
             merged_result["summary"]["skipped"] += summary.get("skipped", 0)
             merged_result["summary"]["errors"] += summary.get("errors", 0)
         
+        merged_result["summary"]["collected"] = merged_result["summary"]["total"]
         merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
         
         return merged_result
     
-    def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
-                  stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
-        self.container_name = self.default_container_name
-        volumes = self._setup_container_volumes(workdir="/run_dir")
-        self.start_container(image_name=self.image_name, container_name=self.container_name,
-                           volumes=volumes, working_dir="/run_dir")
-        
+    def _configure_test_reporters(self, command: str) -> None:
         try:
             result = self.timeout_exec_run(
                 "bash -c 'cat /run_dir/Gemfile 2>/dev/null || echo \"\"'",
@@ -219,29 +218,49 @@ class RubyDockerRepo(AbstractDockerRepo):
             
             gemfile_content = result.get("stdout", b"").decode("utf-8", errors="ignore")
             
-            if "rspec" in gemfile_content.lower():
+            if "rspec" in gemfile_content.lower() or "rspec" in command.lower():
                 self.timeout_exec_run(
-                    f"bash -c 'gem install rspec_junit_formatter || true'",
+                    "bash -c 'gem install rspec_junit_formatter || true'",
                     timeout=120
                 )
                 
-                rspec_config = '''
+                rspec_config = """require 'rspec_junit_formatter'
                                 RSpec.configure do |config|
-                                config.add_formatter('RspecJunitFormatter', '/run_dir/test-results/rspec.xml')
-                                config.add_formatter('json', '/run_dir/test-results/rspec.json')
+                                config.add_formatter RspecJunitFormatter, '/run_dir/test-results/rspec.xml'
+                                config.add_formatter :json, '/run_dir/test-results/rspec.json'
                                 end
-                                '''
+                                """
                 self.timeout_exec_run(
-                    f"bash -c 'echo \"{rspec_config}\" > /run_dir/.rspec_formatter.rb'",
+                    "bash -c \"cat <<'EOF' > /run_dir/.rspec_formatter.rb\n" + rspec_config + "\nEOF\"",
                     timeout=30
                 )
-            elif "minitest" in gemfile_content.lower():
+            
+            if "minitest" in gemfile_content.lower() or "minitest" in command.lower():
                 self.timeout_exec_run(
-                    f"bash -c 'gem install minitest-junit || true'",
+                    "bash -c 'gem install minitest-reporters || true'",
                     timeout=120
+                )
+                
+                minitest_config = """require 'minitest/reporters'
+                                    Minitest::Reporters.use! [
+                                    Minitest::Reporters::JUnitReporter.new('/run_dir/test-results')
+                                    ]
+                                """
+                self.timeout_exec_run(
+                    "bash -c \"cat <<'EOF' > /run_dir/.minitest_formatter.rb\n" + minitest_config + "\nEOF\"",
+                    timeout=30
                 )
         except Exception as e:
             logger.warning(f"Failed to configure test reporters: {e}")
+    
+    def build_env(self, command: str = "bundle install", timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
+                  stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
+        self.container_name = self.default_container_name
+        volumes = self._setup_container_volumes(workdir="/run_dir")
+        self.start_container(image_name=self.image_name, container_name=self.container_name,
+                           volumes=volumes, working_dir="/run_dir")
+        
+        self._configure_test_reporters(command)
         
         try:
             self.evaluation_time = time.time()
@@ -286,7 +305,7 @@ class RubyDockerRepo(AbstractDockerRepo):
     def was_build(self) -> bool:
         return self._image_exists(self.default_image_name)
     
-    def __call__(self, command_build: str, command_test: str, timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
+    def __call__(self, command_build: str = "bundle install", command_test: str = "bundle exec rspec", timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
                  timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT) -> Dict[str, object]:
         if not self.was_build:
             self.build_env(command=command_build, timeout=timeout_build)
@@ -299,14 +318,20 @@ class RubyDockerRepo(AbstractDockerRepo):
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
         
+        self._configure_test_reporters(command)
+        
         try:
             self.evaluation_time = time.time()
             
             modified_command = command
-            if "rspec" in command and "--format" not in command:
-                modified_command = f"{command} --require /run_dir/.rspec_formatter.rb --format RspecJunitFormatter --out /run_dir/test-results/rspec.xml --format json --out /run_dir/test-results/rspec.json"
+            prefix = ""
+            if "rspec" in command.lower() and "--format" not in command:
+                modified_command = f"{command} --require ./.rspec_formatter.rb"
+            elif "minitest" in command.lower() or "test" in command.lower():
+                prefix = 'RUBYOPT="-r ./.minitest_formatter.rb" '
+                modified_command = command
             
-            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {modified_command}'", timeout=timeout)
+            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {prefix}{modified_command}'", timeout=timeout)
                 
         except TimeOutException:
             self.return_code = 2
@@ -353,14 +378,12 @@ class RubyDockerRepo(AbstractDockerRepo):
         return self._format_results(test_json=test_results)
     
     def _format_results(self, test_json: Optional[Dict] = None) -> Dict[str, object]:
-        if test_json and "summary" in test_json:
-            parser_result = test_json
-        else:
-            parser_result = {
-                "tests": [],
-                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
-                "status": "unknown"
-            }
+        default_result = {
+            "tests": [],
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "collected": 0},
+            "status": "unknown"
+        }
+        parser_result = test_json or default_result
         
         return {
             "stdout": self.stdout,
@@ -368,7 +391,7 @@ class RubyDockerRepo(AbstractDockerRepo):
             "std": self.std,
             "returncode": self.return_code,
             "parser": parser_result,
-            "report": test_json or {},
+            "report": parser_result,
             "time": self.evaluation_time,
             "run_id": self.run_id
         }

@@ -35,7 +35,8 @@ def parse_php_test_report(report_path: str) -> Dict[str, object]:
                     "passed": 0,
                     "failed": 0,
                     "skipped": 0,
-                    "errors": 0
+                    "errors": 0,
+                    "collected": 0
                 }
             }
             
@@ -75,6 +76,7 @@ def parse_php_test_report(report_path: str) -> Dict[str, object]:
                     
                     result["tests"].append(test_info)
             
+            result["summary"]["collected"] = result["summary"]["total"]
             result["summary"]["passed"] = (
                 result["summary"]["total"] 
                 - result["summary"]["failed"] 
@@ -97,7 +99,7 @@ class PhpDockerRepo(AbstractDockerRepo):
                  base_commit: str,
                  default_cache_folder: str = DEFAULT_CACHE_FOLDER,
                  default_url: str = "http://github.com",
-                 image_name: str = "composer:latest",
+                 image_name: str = "php:8.1-cli",
                  cache_mode: CacheMode = "volume"
                  ) -> None:
         super().__init__(repo=repo, base_commit=base_commit, default_cache_folder=default_cache_folder,
@@ -146,7 +148,7 @@ class PhpDockerRepo(AbstractDockerRepo):
         
         merged_result = {
             "tests": [],
-            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "collected": 0}
         }
         
         for report in reports:
@@ -164,13 +166,17 @@ class PhpDockerRepo(AbstractDockerRepo):
             merged_result["summary"]["failed"] += int(summary.get("failed", 0) or 0)
             merged_result["summary"]["skipped"] += int(summary.get("skipped", 0) or 0)
             merged_result["summary"]["errors"] += int(summary.get("errors", 0) or 0)
+            merged_result["summary"]["collected"] += int(summary.get("collected", 0) or 0)
         
         merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
         
         return merged_result
     
-    def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
+    def build_env(self, command: str = None, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
                   stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
+        if command is None:
+            command = "apt-get update && apt-get install -y git zip unzip libzip-dev && docker-php-ext-install zip && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer && composer install --no-interaction --prefer-dist"
+        
         self.container_name = self.default_container_name
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
@@ -186,14 +192,13 @@ class PhpDockerRepo(AbstractDockerRepo):
             
             if "phpunit" in composer_content.lower():
                 phpunit_config = '''<?xml version="1.0" encoding="UTF-8"?>
-                                        <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                                                xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
-                                                bootstrap="vendor/autoload.php">
-                                            <logging>
-                                                <junit outputFile="/run_dir/test-results/junit.xml"/>
-                                            </logging>
-                                        </phpunit>
-                                '''
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php">
+    <logging>
+        <junit outputFile="/run_dir/test-results/junit.xml"/>
+    </logging>
+</phpunit>'''
                 self.timeout_exec_run(
                     f"sh -c 'echo \"{phpunit_config}\" > /run_dir/phpunit.xml.dist'",
                     timeout=30
@@ -244,25 +249,48 @@ class PhpDockerRepo(AbstractDockerRepo):
     def was_build(self) -> bool:
         return self._image_exists(self.default_image_name)
     
-    def __call__(self, command_build: str, command_test: str, timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
+    def __call__(self, command_build: str = None, command_test: str = None, timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
                  timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT) -> Dict[str, object]:
         if not self.was_build:
             self.build_env(command=command_build, timeout=timeout_build)
         return self.run_test(command=command_test, timeout=timeout_test)
     
-    def run_test(self, command: str = "vendor/bin/phpunit", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
+    def run_test(self, command: str = None, timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
                  stop_container: bool = True) -> Dict[str, object]:
+        
+        if command is None:
+            test_commands = [
+                "vendor/bin/phpunit",
+                "php vendor/bin/phpunit",
+                "./phpunit",
+                "./vendor/bin/phpunit"
+            ]
+        else:
+            test_commands = [command]
         
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(image_name=self.image_name, container_name=self.container_name,
                            volumes=volumes, working_dir="/run_dir")
         
+        command_found = None
+        for test_cmd in test_commands:
+            check_result = self.timeout_exec_run(
+                f"sh -c 'test -f {test_cmd.split()[0]} && echo found'",
+                timeout=10
+            )
+            if check_result and b"found" in check_result.get("stdout", b""):
+                command_found = test_cmd
+                break
+        
+        if command_found is None:
+            command_found = test_commands[0]
+        
         try:
             self.evaluation_time = time.time()
             
-            modified_command = command
-            if "phpunit" in command and "--log-junit" not in command:
-                modified_command = f"{command} --log-junit /run_dir/test-results/junit.xml"
+            modified_command = command_found
+            if "phpunit" in command_found and "--log-junit" not in command_found:
+                modified_command = f"{command_found} --log-junit /run_dir/test-results/junit.xml"
             
             self.timeout_exec_run(f"sh -c 'mkdir -p /run_dir/test-results && {modified_command}'", timeout=timeout)
                 
@@ -316,7 +344,7 @@ class PhpDockerRepo(AbstractDockerRepo):
         else:
             parser_result = {
                 "tests": [],
-                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
+                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "collected": 0},
                 "status": "unknown"
             }
         

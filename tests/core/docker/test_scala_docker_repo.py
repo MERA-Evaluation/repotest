@@ -2,26 +2,45 @@
 import pytest
 from repotest.core.docker.scala import ScalaDockerRepo
 
-@pytest.fixture(params=["download", "shared", "local", "volume"])
-def repo(request):
+def pytest_addoption(parser):
+    parser.addoption(
+        "--slow",
+        action="store_true",
+        default=False,
+        help="Run slow tests with all cache modes"
+    )
+
+def pytest_generate_tests(metafunc):
+    if "cache_mode" in metafunc.fixturenames:
+        if metafunc.config.getoption("--slow"):
+            metafunc.parametrize("cache_mode", ["download", "shared", "local", "volume"])
+        else:
+            metafunc.parametrize("cache_mode", ["download"])
+
+@pytest.fixture
+def test_result_json4s(cache_mode):
     repo_instance = ScalaDockerRepo(
-        repo="monix/monix",
-        base_commit="v3.4.0",
-        cache_mode=request.param,
+        repo="json4s/json4s",
+        base_commit="7cee8785cb3c701192820de4a66c86c87c380523",
+        cache_mode=cache_mode,
     )
     repo_instance.clean()
-    return repo_instance
 
-def test_scala_docker_repo(repo):
-    assert repo.repo == "monix/monix"
+    assert repo_instance.repo == "json4s/json4s"
+    assert repo_instance.base_commit == "7cee8785cb3c701192820de4a66c86c87c380523"
+
+    result = repo_instance.run_test(timeout=60 * 10)
     
-    result = repo.run_test(timeout=60 * 10)
-    
-    assert result is not None
-    parser = result["parser"]
-    assert parser["status"] == "passed"
-    assert parser["summary"]["total"] > 0
-    assert parser["summary"]["passed"] > 0
-    assert parser["summary"]["failed"] >= 0
-    assert parser["summary"]["skipped"] >= 0
-    assert isinstance(result["report"], dict)
+    return result
+
+
+def test_scala_docker_repo_json4s(test_result_json4s):
+    assert test_result_json4s is not None
+    assert isinstance(test_result_json4s["report"], dict)
+
+    report = test_result_json4s["report"]['summary']
+    assert report["total"] == 1771
+    assert report["passed"] == 1767
+    assert report["collected"] == 1771
+    assert report["failed"] == 0
+    assert test_result_json4s["report"]["status"] == "passed"

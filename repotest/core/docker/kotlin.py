@@ -1,107 +1,160 @@
-import json, logging, os, time
+import json
+import logging
+import os
+import re
+import time
 from functools import cached_property
-from typing import Dict, Literal, Optional
-from docker.errors import APIError, ImageNotFound
-from repotest.constants import DEFAULT_BUILD_TIMEOUT_INT, DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT
+from typing import Dict, Optional, List, cast
+from docker.errors import APIError, ImageNotFound, NotFound
+
+from repotest.constants import (
+    DEFAULT_BUILD_TIMEOUT_INT,
+    DEFAULT_CACHE_FOLDER,
+    DEFAULT_EVAL_TIMEOUT_INT
+)
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
 from repotest.core.docker.types import CacheMode
 
 logger = logging.getLogger("repotest")
 
-def parse_kotlin_test_report(report_path: str) -> Dict[str, object]:
-    if not os.path.exists(report_path):
+
+def parse_gradle_console_output(stdout: str, stderr: str) -> Dict[str, object]:
+    combined = stdout + "\n" + stderr
+    
+    result = {
+        "total": 0,
+        "passed": 0,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "collected": 0
+    }
+    
+    for line in combined.split('\n'):
+        match = re.search(r'(\d+) tests? completed(?:, (\d+) failed)?(?:, (\d+) skipped)?', line)
+        if match:
+            result["total"] = int(match.group(1))
+            result["failed"] = int(match.group(2) or 0)
+            result["skipped"] = int(match.group(3) or 0)
+            result["passed"] = result["total"] - result["failed"] - result["skipped"]
+            result["collected"] = result["total"]
+            break
+    
+    return result
+
+
+def parse_junit_xml_report(xml_path: str) -> Dict[str, object]:
+    if not os.path.exists(xml_path):
         return {}
     
     try:
-        with open(report_path, "r") as f:
-            content = f.read()
+        import xml.etree.ElementTree as ET
+        tree = ET.parse(xml_path)
+        root = tree.getroot()
+        
+        result = {
+            "tests": [],
+            "summary": {
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "errors": 0,
+                "collected": 0
+            },
+            "status": "unknown"
+        }
+        
+        testsuites = root.findall(".//testsuite")
+        if not testsuites and root.tag == "testsuite":
+            testsuites = [root]
+        
+        for testsuite in testsuites:
+            tests_count = int(testsuite.get("tests", 0))
+            failures_count = int(testsuite.get("failures", 0))
+            errors_count = int(testsuite.get("errors", 0))
+            skipped_count = int(testsuite.get("skipped", 0))
             
-            if content.strip().startswith("{") or content.strip().startswith("["):
-                data = json.loads(content)
+            result["summary"]["total"] += tests_count
+            result["summary"]["failed"] += failures_count
+            result["summary"]["errors"] += errors_count
+            result["summary"]["skipped"] += skipped_count
+            
+            for testcase in testsuite.findall("testcase"):
+                test_name = testcase.get("name", "")
+                test_classname = testcase.get("classname", "")
+                test_time = float(testcase.get("time", 0))
                 
-                if "tests" in data and "summary" in data:
-                    return data
+                full_name = f"{test_classname}.{test_name}" if test_classname else test_name
                 
-                return {}
-            
-            import xml.etree.ElementTree as ET
-            root = ET.fromstring(content)
-            
-            result = {
-                "tests": [],
-                "summary": {
-                    "total": 0,
-                    "passed": 0,
-                    "failed": 0,
-                    "skipped": 0,
-                    "errors": 0
+                test_info = {
+                    "name": full_name or "unknown",
+                    "classname": test_classname,
+                    "time": test_time,
+                    "status": "passed"
                 }
-            }
-            
-            testsuites = root.findall(".//testsuite")
-            if not testsuites and root.tag == "testsuite":
-                testsuites = [root]
-            
-            for testsuite in testsuites:
-                result["summary"]["total"] += int(testsuite.get("tests", 0))
-                result["summary"]["failed"] += int(testsuite.get("failures", 0))
-                result["summary"]["errors"] += int(testsuite.get("errors", 0))
-                result["summary"]["skipped"] += int(testsuite.get("skipped", 0))
                 
-                for testcase in testsuite.findall("testcase"):
-                    test_info = {
-                        "name": testcase.get("name"),
-                        "classname": testcase.get("classname"),
-                        "time": float(testcase.get("time", 0)),
-                        "status": "passed"
-                    }
-                    
-                    failure = testcase.find("failure")
-                    error = testcase.find("error")
-                    skipped = testcase.find("skipped")
-                    
-                    if failure is not None:
-                        test_info["status"] = "failed"
-                        test_info["message"] = failure.get("message", "")
-                        test_info["details"] = failure.text or ""
-                    elif error is not None:
-                        test_info["status"] = "error"
-                        test_info["message"] = error.get("message", "")
-                        test_info["details"] = error.text or ""
-                    elif skipped is not None:
-                        test_info["status"] = "skipped"
-                        test_info["message"] = skipped.get("message", "")
-                    
-                    result["tests"].append(test_info)
-            
-            result["summary"]["passed"] = (
-                result["summary"]["total"] 
-                - result["summary"]["failed"] 
-                - result["summary"]["errors"] 
-                - result["summary"]["skipped"]
-            )
-            result["status"] = "passed" if (result["summary"]["failed"] + result["summary"]["errors"]) == 0 else "failed"
-            
-            return result
-            
-    except (json.JSONDecodeError, Exception) as e:
-        logger.warning(f"Failed to parse test report: {e}")
+                failure = testcase.find("failure")
+                error = testcase.find("error")
+                skipped = testcase.find("skipped")
+                
+                if failure is not None:
+                    test_info["status"] = "failed"
+                    test_info["message"] = failure.get("message", "")
+                    test_info["details"] = (failure.text or "").strip()
+                elif error is not None:
+                    test_info["status"] = "error"
+                    test_info["message"] = error.get("message", "")
+                    test_info["details"] = (error.text or "").strip()
+                elif skipped is not None:
+                    test_info["status"] = "skipped"
+                    test_info["message"] = skipped.get("message", "")
+                
+                result["tests"].append(test_info)
+        
+        result["summary"]["passed"] = (
+            result["summary"]["total"] 
+            - result["summary"]["failed"] 
+            - result["summary"]["errors"] 
+            - result["summary"]["skipped"]
+        )
+        result["summary"]["collected"] = result["summary"]["total"]
+        
+        has_failures = (result["summary"]["failed"] + result["summary"]["errors"]) > 0
+        has_tests = result["summary"]["total"] > 0
+        
+        if has_tests:
+            result["status"] = "failed" if has_failures else "passed"
+        else:
+            result["status"] = "unknown"
+        
+        return result
+        
+    except Exception as e:
+        logger.warning(f"Failed to parse XML report {xml_path}: {e}")
         return {}
 
 
 class KotlinDockerRepo(AbstractDockerRepo):
     
-    def __init__(self,
-                 repo: str,
-                 base_commit: str,
-                 default_cache_folder: str = DEFAULT_CACHE_FOLDER,
-                 default_url: str = "http://github.com",
-                 image_name: str = "gradle:jdk11",
-                 cache_mode: CacheMode = "volume"
-                ) -> None:
-        super().__init__(repo=repo, base_commit=base_commit, default_cache_folder=default_cache_folder,
-                         default_url=default_url, image_name=image_name, cache_mode=cache_mode)
+    def __init__(
+        self,
+        repo: str,
+        base_commit: str,
+        default_cache_folder: str = DEFAULT_CACHE_FOLDER,
+        default_url: str = "http://github.com",
+        image_name: str = "gradle:8.5-jdk17",
+        cache_mode: CacheMode = "volume"
+    ) -> None:
+        super().__init__(
+            repo=repo,
+            base_commit=base_commit,
+            default_cache_folder=default_cache_folder,
+            default_url=default_url,
+            image_name=image_name,
+            cache_mode=cache_mode
+        )
         self.stdout = ""
         self.stderr = ""
         self.std = ""
@@ -112,6 +165,10 @@ class KotlinDockerRepo(AbstractDockerRepo):
         return os.path.expanduser("~/.gradle")
     
     @cached_property
+    def _user_kotlin_cache(self) -> str:
+        return os.path.expanduser("~/.kotlin")
+    
+    @cached_property
     def _local_gradle_cache(self) -> str:
         return os.path.join(self.cache_folder, ".gradle_cache")
     
@@ -119,7 +176,10 @@ class KotlinDockerRepo(AbstractDockerRepo):
     def _local_kotlin_cache(self) -> str:
         return os.path.join(self.cache_folder, ".kotlin_cache")
     
-    def _setup_container_volumes(self, workdir: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+    def _setup_container_volumes(
+        self, 
+        workdir: Optional[str] = None
+    ) -> Dict[str, Dict[str, str]]:
         volumes = {}
         if workdir:
             volumes[self.cache_folder] = {"bind": workdir, "mode": "rw"}
@@ -132,6 +192,8 @@ class KotlinDockerRepo(AbstractDockerRepo):
         elif self.cache_mode == "shared":
             if os.path.exists(self._user_gradle_cache):
                 volumes[self._user_gradle_cache] = {"bind": "/root/.gradle", "mode": "rw"}
+            if os.path.exists(self._user_kotlin_cache):
+                volumes[self._user_kotlin_cache] = {"bind": "/root/.kotlin", "mode": "rw"}
         elif self.cache_mode == "local":
             os.makedirs(self._local_gradle_cache, exist_ok=True)
             os.makedirs(self._local_kotlin_cache, exist_ok=True)
@@ -140,83 +202,158 @@ class KotlinDockerRepo(AbstractDockerRepo):
         
         return volumes
     
-    def _merge_reports(self, reports: list[Dict[str, Dict]]) -> Dict[str, object]:
+    def start_container(
+        self,
+        image_name: str,
+        container_name: str,
+        volumes: Dict,
+        working_dir: str
+    ) -> None:
+        try:
+            existing_container = self.docker_client.containers.get(container_name)
+            existing_container.remove(force=True)
+        except NotFound:
+            pass
+        
+        self.container = self.docker_client.containers.run(
+            image_name,
+            name=container_name,
+            volumes=volumes,
+            working_dir=working_dir,
+            command='/bin/sh -c "tail -f /dev/null"',
+            detach=True,
+            shm_size='2g'
+        )
+    
+    def _merge_reports(self, reports: List[Dict[str, object]]) -> Dict[str, object]:
         if not reports:
-            return {}
+            return {
+                "tests": [],
+                "summary": {
+                    "total": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "errors": 0,
+                    "collected": 0
+                },
+                "status": "unknown"
+            }
         
         merged_result = {
             "tests": [],
-            "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "errors": 0}
+            "summary": {
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "errors": 0,
+                "collected": 0
+            }
         }
         
         for report in reports:
             if "tests" in report:
-                merged_result["tests"].extend(report.get("tests", []))
+                tests = cast(List[Dict[str, object]], report.get("tests", []))
+                merged_result["tests"].extend(tests)
             
-            summary = report.get("summary", {})
-            if isinstance(summary, dict):
-                merged_result["summary"]["total"] += summary.get("total", 0)
-                merged_result["summary"]["passed"] += summary.get("passed", 0)
-                merged_result["summary"]["failed"] += summary.get("failed", 0)
-                merged_result["summary"]["skipped"] += summary.get("skipped", 0)
-                merged_result["summary"]["errors"] += summary.get("errors", 0)
+            summary = cast(Dict[str, int], report.get("summary", {}))
+            merged_result["summary"]["total"] += int(summary.get("total", 0))
+            merged_result["summary"]["passed"] += int(summary.get("passed", 0))
+            merged_result["summary"]["failed"] += int(summary.get("failed", 0))
+            merged_result["summary"]["skipped"] += int(summary.get("skipped", 0))
+            merged_result["summary"]["errors"] += int(summary.get("errors", 0))
         
-        merged_result["status"] = "passed" if (merged_result["summary"]["failed"] + merged_result["summary"]["errors"]) == 0 and merged_result["summary"]["total"] > 0 else "failed"
+        merged_result["summary"]["collected"] = merged_result["summary"]["total"]
+        
+        has_failures = (
+            merged_result["summary"]["failed"] + 
+            merged_result["summary"]["errors"]
+        ) > 0
+        has_tests = merged_result["summary"]["total"] > 0
+        
+        if has_tests:
+            merged_result["status"] = "failed" if has_failures else "passed"
+        else:
+            merged_result["status"] = "unknown"
         
         return merged_result
     
-    def build_env(self, command: str, timeout: int = DEFAULT_BUILD_TIMEOUT_INT, commit_image: bool = True,
-                  stop_container: bool = True, push_image: bool = False) -> Dict[str, object]:
+    def _find_test_reports(self) -> List[str]:
+        xml_paths = []
+        
+        for root, dirs, files in os.walk(self.cache_folder):
+            for filename in files:
+                if filename.endswith(".xml"):
+                    full_path = os.path.join(root, filename)
+                    if "test-results" in full_path or "/test/" in full_path:
+                        xml_paths.append(full_path)
+        
+        logger.info(f"Found {len(xml_paths)} XML test report files")
+        return xml_paths
+    
+    def build_env(
+        self,
+        command: str = "./gradlew build -x test --no-daemon",
+        timeout: int = 1800,
+        commit_image: bool = True,
+        stop_container: bool = True,
+        push_image: bool = False
+    ) -> Dict[str, object]:
         self.container_name = self.default_container_name
         volumes = self._setup_container_volumes(workdir="/run_dir")
-        self.start_container(image_name=self.image_name, container_name=self.container_name,
-                           volumes=volumes, working_dir="/run_dir")
+        
+        self.start_container(
+            image_name=self.image_name,
+            container_name=self.container_name,
+            volumes=volumes,
+            working_dir="/run_dir"
+        )
         
         try:
-            result = self.timeout_exec_run(
-                "bash -c 'cat /run_dir/build.gradle.kts 2>/dev/null || cat /run_dir/build.gradle 2>/dev/null || echo \"\"'",
-                timeout=30
-            ) or {}
-            
-            build_gradle_content = result.get("stdout", b"").decode("utf-8", errors="ignore")
-            
-            if "build.gradle" in build_gradle_content or len(build_gradle_content) > 0:
-                gradle_config = '''
-                                tasks.test {
-                                    useJUnitPlatform()
-                                    reports {
-                                        junitXml.required.set(true)
-                                        junitXml.outputLocation.set(file("test-results/junit.xml"))
-                                    }
-                                }
-                                '''
-                self.timeout_exec_run(
-                    f"bash -c 'echo \"{gradle_config}\" >> /run_dir/build.gradle.kts || echo \"{gradle_config}\" >> /run_dir/build.gradle'",
-                    timeout=30
-                )
-        except Exception as e:
-            logger.warning(f"Failed to configure test reporters: {e}")
+            self.timeout_exec_run("chmod +x gradlew 2>/dev/null || true", timeout=10)
+        except Exception:
+            pass
+        
+        gradle_opts = (
+            'export GRADLE_OPTS="-Xmx3g -Xms512m '
+            '-XX:MaxMetaspaceSize=1g '
+            '-Dorg.gradle.daemon=false '
+            '-Dorg.gradle.parallel=true '
+            '-Dorg.gradle.caching=true '
+            '-Dorg.gradle.configureondemand=true"'
+        )
+        
+        full_command = f"bash -c '{gradle_opts} && {command}'"
         
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
+            result = self.timeout_exec_run(full_command, timeout=timeout)
+            if result:
+                self.return_code = result.get("returncode", 0)
         except TimeOutException:
             self.return_code = 2
-            self.stderr += b"Timeout exception"
+            self.stderr = b"Build timeout"
             self._FALL_WITH_TIMEOUT_EXCEPTION = True
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
         if self._FALL_WITH_TIMEOUT_EXCEPTION:
-            raise TimeOutException(f"Command timed out after {timeout}s.")
-        if commit_image:
+            if stop_container:
+                self.stop_container()
+            raise TimeOutException(f"Build timeout after {timeout}s")
+        
+        if commit_image and self.return_code == 0:
             self._commit_container_image()
+        
         if push_image:
             self.push_image()
+        
         if stop_container:
             self.stop_container()
-        return self._format_results()
+        
+        return self._format_results(test_json=None)
     
     def _commit_container_image(self, retries: int = 3, delay: int = 10) -> None:
         for attempt in range(retries):
@@ -240,60 +377,103 @@ class KotlinDockerRepo(AbstractDockerRepo):
     def was_build(self) -> bool:
         return self._image_exists(self.default_image_name)
     
-    def __call__(self, command_build: str, command_test: str, timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
-                 timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT) -> Dict[str, object]:
+    def __call__(
+        self,
+        command_build: str = "./gradlew build -x test --no-daemon",
+        command_test: str = "./gradlew test --no-daemon",
+        timeout_build: int = 1800,
+        timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT
+    ) -> Dict[str, object]:
         if not self.was_build:
             self.build_env(command=command_build, timeout=timeout_build)
         return self.run_test(command=command_test, timeout=timeout_test)
     
-    def run_test(self, command: str = "./gradlew test", timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
-                 stop_container: bool = True) -> Dict[str, object]:
-        
+    def run_test(
+        self,
+        command: str = "./gradlew test --no-daemon",
+        timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
+        stop_container: bool = True
+    ) -> Dict[str, object]:
         volumes = self._setup_container_volumes(workdir="/run_dir")
-        self.start_container(image_name=self.image_name, container_name=self.container_name,
-                           volumes=volumes, working_dir="/run_dir")
+        
+        self.start_container(
+            image_name=self.image_name,
+            container_name=self.container_name,
+            volumes=volumes,
+            working_dir="/run_dir"
+        )
+        
+        try:
+            self.timeout_exec_run("chmod +x gradlew 2>/dev/null || true", timeout=10)
+        except Exception:
+            pass
+        
+        gradle_opts = (
+            'export GRADLE_OPTS="-Xmx3g -Xms512m '
+            '-XX:MaxMetaspaceSize=1g '
+            '-Dorg.gradle.daemon=false '
+            '-Dorg.gradle.parallel=true"'
+        )
+        
+        full_command = f"bash -c '{gradle_opts} && {command}'"
+        
+        original_return_code = 1
         
         try:
             self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c 'mkdir -p /run_dir/test-results && {command}'", timeout=timeout)
-                
+            result = self.timeout_exec_run(full_command, timeout=timeout)
+            if result:
+                original_return_code = result.get("returncode", 1)
         except TimeOutException:
             self.return_code = 2
-            self.stderr = b"Timeout exception"
+            self.stderr = b"Test timeout"
             self._FALL_WITH_TIMEOUT_EXCEPTION = True
+        except Exception as e:
+            logger.error(f"Test execution error: {e}")
+            self.return_code = 1
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
         
-        all_report_files = set()
-        cache_folder = self.cache_folder if self.cache_folder is not None else "."
-
-        report_dirs = [
-            os.path.join(cache_folder, "build/test-results/test"),
-            os.path.join(cache_folder, "test-results")
-        ]
-        
-        for report_dir in report_dirs:
-            if os.path.exists(report_dir) and os.path.isdir(report_dir):
-                for filename in os.listdir(report_dir):
-                    if filename.endswith((".json", ".xml")):
-                        all_report_files.add(os.path.join(report_dir, filename))
-
-        known_paths = [
-            os.path.join(cache_folder, "build/test-results/test/TEST-junit-jupiter.xml"),
-        ]
-        
-        for report_path in known_paths:
-            if os.path.exists(report_path) and os.path.isfile(report_path):
-                    all_report_files.add(report_path)
-        
         parsed_reports = []
-        for report_file in all_report_files:
-            parsed_report = parse_kotlin_test_report(report_file)
-            if parsed_report and parsed_report.get("summary", {}).get("total", 0) > 0:
+        report_paths = self._find_test_reports()
+        
+        for report_path in report_paths:
+            parsed_report = parse_junit_xml_report(report_path)
+            
+            if (parsed_report and 
+                isinstance(parsed_report, dict) and 
+                parsed_report.get("summary", {}).get("total", 0) > 0):
                 parsed_reports.append(parsed_report)
         
         test_results = self._merge_reports(parsed_reports)
+        
+        if test_results["summary"]["total"] == 0:
+            console_stats = parse_gradle_console_output(self.stdout, self.stderr)
+            if console_stats["total"] > 0:
+                test_results["summary"] = console_stats
+                test_results["status"] = (
+                    "failed" if (console_stats["failed"] > 0 or console_stats["errors"] > 0) 
+                    else "passed"
+                )
+        
+        if test_results.get("status") == "passed":
+            self.return_code = 0
+        elif test_results.get("status") == "failed":
+            self.return_code = 1
+        else:
+            self.return_code = original_return_code
+            if original_return_code == 0:
+                test_results["status"] = "passed"
+            else:
+                test_results["status"] = "failed"
+        
+        logger.info(
+            f"Tests: {test_results['summary']['total']}, "
+            f"Passed: {test_results['summary']['passed']}, "
+            f"Failed: {test_results['summary']['failed']}, "
+            f"Status: {test_results['status']}"
+        )
         
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
@@ -301,13 +481,20 @@ class KotlinDockerRepo(AbstractDockerRepo):
         return self._format_results(test_json=test_results)
     
     def _format_results(self, test_json: Optional[Dict] = None) -> Dict[str, object]:
-        if test_json and "summary" in test_json:
+        if test_json and test_json.get("summary", {}).get("total", 0) > 0:
             parser_result = test_json
         else:
             parser_result = {
                 "tests": [],
-                "summary": {"total": 0, "passed": 0, "failed": 0, "skipped": 0},
-                "status": "unknown"
+                "summary": {
+                    "total": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "skipped": 0,
+                    "errors": 0,
+                    "collected": 0
+                },
+                "status": test_json.get("status", "unknown") if test_json else "unknown"
             }
         
         return {
@@ -316,7 +503,7 @@ class KotlinDockerRepo(AbstractDockerRepo):
             "std": self.std,
             "returncode": self.return_code,
             "parser": parser_result,
-            "report": test_json or {},
+            "report": parser_result,
             "time": self.evaluation_time,
             "run_id": self.run_id
         }
