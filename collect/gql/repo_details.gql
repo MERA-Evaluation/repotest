@@ -1,0 +1,77 @@
+# repo_details.gql
+query ($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    name
+    nameWithOwner
+    url
+    createdAt
+    updatedAt
+    pushedAt
+    diskUsage
+    stargazerCount
+    forkCount
+    archivedAt
+    autoMergeAllowed
+    allowUpdateBranch
+    deleteBranchOnMerge
+    description
+    descriptionHTML
+    hasDiscussionsEnabled
+    hasIssuesEnabled
+    hasProjectsEnabled
+    hasSponsorshipsEnabled
+    hasVulnerabilityAlertsEnabled
+    hasWikiEnabled
+    homepageUrl
+    isArchived
+    isBlankIssuesEnabled
+    isDisabled
+    isEmpty
+    isFork
+    isInOrganization
+    isLocked
+    isMirror
+    isPrivate
+    isSecurityPolicyEnabled
+    isTemplate
+    isUserConfigurationRepository
+    lockReason
+    mergeCommitAllowed
+    mergeCommitMessage
+    mergeCommitTitle
+    mirrorUrl
+    openGraphImageUrl
+    rebaseMergeAllowed
+    securityPolicyUrl
+    shortDescriptionHTML
+    squashMergeAllowed
+    squashMergeCommitMessage
+    squashMergeCommitTitle
+    sshUrl
+    usesCustomOpenGraphImage
+    visibility
+    webCommitSignoffRequired
+    licenseInfo {
+      name
+      spdxId
+    }
+    primaryLanguage {
+      name
+    }
+    pullRequests {
+      totalCount
+    }
+    mergedPRs: pullRequests(states: MERGED) {
+      totalCount
+    }
+    issues {
+      totalCount
+    }
+    closedIssues: issues(states: CLOSED) {
+      totalCount
+    }
+    openIssues: issues(states: OPEN) {
+      totalCount
+    }
+  }
+}
