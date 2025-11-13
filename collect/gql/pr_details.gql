@@ -1,0 +1,24 @@
+# pr_details.gql
+query ($owner: String!, $name: String!, $prNumber: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $prNumber) {
+      title
+      body
+      number
+      state
+      createdAt
+      mergedAt
+      comments(first: 100) {
+        edges {
+          node {
+            author {
+              login
+            }
+            body
+            createdAt
+          }
+        }
+      }
+    }
+  }
+}

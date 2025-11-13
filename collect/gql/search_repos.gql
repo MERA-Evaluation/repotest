@@ -1,0 +1,35 @@
+# pipeline/queries/search_repos.gql
+query ($searchQuery: String!, $maxResults: Int!) {
+  search(query: $searchQuery, type: REPOSITORY, first: $maxResults) {
+    repositoryCount
+    edges {
+      node {
+        ... on Repository {
+          name
+          nameWithOwner
+          owner {
+            login
+          }
+          url
+          description
+          createdAt
+          updatedAt
+          pushedAt
+          stargazerCount
+          forkCount
+          diskUsage
+          primaryLanguage {
+            name
+          }
+          licenseInfo {
+            name
+            spdxId
+          }
+          isArchived
+          isFork
+          isPrivate
+        }
+      }
+    }
+  }
+}

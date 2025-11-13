@@ -1,0 +1,78 @@
+# issue_pr_map.gql
+query($owner: String!, $name: String!, $cursor: String, $timelineAfter: String) {
+  repository(owner: $owner, name: $name) {
+    issues(
+      states: CLOSED, 
+      first: 100, 
+      after: $cursor, 
+      orderBy: {field: UPDATED_AT, direction: DESC}
+    ) {
+      totalCount
+      edges {
+        node {
+          number
+          createdAt
+          closedAt
+          updatedAt
+          title
+          body
+          state
+          timelineItems(
+            itemTypes: [CLOSED_EVENT, CROSS_REFERENCED_EVENT], 
+            first: 10, 
+            after: $timelineAfter
+          ) {
+            pageInfo {
+              endCursor
+              hasNextPage
+            }
+            nodes {
+              ... on ClosedEvent {
+                closer {
+                  ... on PullRequest {
+                    number
+                    mergedAt
+                    baseRefOid
+                    mergeCommit {
+                      oid
+                      committedDate
+                    }
+                    repository {
+                      owner {
+                        login
+                      }
+                      name
+                    }
+                  }
+                }
+              }
+              ... on CrossReferencedEvent {
+                source {
+                  ... on PullRequest {
+                    number
+                    mergedAt
+                    baseRefOid
+                    mergeCommit {
+                      oid
+                      committedDate
+                    }
+                    repository {
+                      owner {
+                        login
+                      }
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      pageInfo {
+        endCursor
+        hasNextPage
+      }
+    }
+  }
+}

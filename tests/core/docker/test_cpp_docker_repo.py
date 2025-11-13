@@ -38,7 +38,7 @@ def test_result_googletest(cache_mode):
     return result
 
 
-def test_cpp_docker_repo_googletest(test_result_googletest):
+def test_cpp_docker_repo_googletest_report(test_result_googletest):
     assert test_result_googletest is not None
     assert isinstance(test_result_googletest["report"], dict)
 
@@ -48,3 +48,14 @@ def test_cpp_docker_repo_googletest(test_result_googletest):
     assert report["collected"] == 63
     assert report["failed"] == 11
     assert test_result_googletest["report"]["status"] == "failed"
+
+def test_cpp_docker_repo_googletest_parser(test_result_googletest):
+    assert test_result_googletest is not None
+    assert isinstance(test_result_googletest["parser"], dict)
+
+    report = test_result_googletest["parser"]['summary']
+    assert report["total"] == 63
+    assert report["passed"] == 52
+    assert report["collected"] == 63
+    assert report["failed"] == 11
+    assert test_result_googletest["parser"]["status"] == "failed"

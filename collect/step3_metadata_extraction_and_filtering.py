@@ -13,7 +13,7 @@ from collections import defaultdict
 from tqdm import tqdm
 import fire
 
-from github_client import GitHubClient
+from collect.github_client import GitHubClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

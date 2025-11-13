@@ -34,7 +34,7 @@ def test_result_mio(cache_mode):
     return result
 
 
-def test_rust_docker_repo_mio(test_result_mio):
+def test_rust_docker_repo_report(test_result_mio):
     assert test_result_mio is not None
     assert isinstance(test_result_mio["report"], dict)
 
@@ -44,3 +44,14 @@ def test_rust_docker_repo_mio(test_result_mio):
     assert report["collected"] == 483
     assert report["failed"] == 0
     assert test_result_mio["report"]["status"] == "passed"
+
+def test_rust_docker_repo_parser(test_result_mio):
+    assert test_result_mio is not None
+    assert isinstance(test_result_mio["parser"], dict)
+
+    report = test_result_mio["parser"]['summary']
+    assert report["total"] == 483
+    assert report["passed"] == 478
+    assert report["collected"] == 483
+    assert report["failed"] == 0
+    assert test_result_mio["parser"]["status"] == "passed"

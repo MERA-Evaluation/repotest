@@ -1,0 +1,24 @@
+# issue_details.gql
+query ($owner: String!, $name: String!, $issueNumber: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $issueNumber) {
+      title
+      body
+      number
+      state
+      createdAt
+      closedAt
+      comments(first: 100) {
+        edges {
+          node {
+            author {
+              login
+            }
+            body
+            createdAt
+          }
+        }
+      }
+    }
+  }
+}

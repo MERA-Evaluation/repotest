@@ -34,7 +34,7 @@ def test_result_json4s(cache_mode):
     return result
 
 
-def test_scala_docker_repo_json4s(test_result_json4s):
+def test_scala_docker_repo_report(test_result_json4s):
     assert test_result_json4s is not None
     assert isinstance(test_result_json4s["report"], dict)
 
@@ -44,3 +44,14 @@ def test_scala_docker_repo_json4s(test_result_json4s):
     assert report["collected"] == 1771
     assert report["failed"] == 0
     assert test_result_json4s["report"]["status"] == "passed"
+
+def test_scala_docker_repo_parser(test_result_json4s):
+    assert test_result_json4s is not None
+    assert isinstance(test_result_json4s["parser"], dict)
+
+    report = test_result_json4s["parser"]['summary']
+    assert report["total"] == 1771
+    assert report["passed"] == 1767
+    assert report["collected"] == 1771
+    assert report["failed"] == 0
+    assert test_result_json4s["parser"]["status"] == "passed"

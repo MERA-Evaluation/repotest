@@ -35,7 +35,7 @@ def test_result_faraday(cache_mode):
     return result
 
 
-def test_ruby_docker_repo_faraday(test_result_faraday):
+def test_ruby_docker_repo_faraday_report(test_result_faraday):
     assert test_result_faraday is not None
     assert isinstance(test_result_faraday["report"], dict)
 
@@ -45,3 +45,14 @@ def test_ruby_docker_repo_faraday(test_result_faraday):
     assert report["collected"] == 1064
     assert report["failed"] == 0
     assert test_result_faraday["report"]["status"] == "passed"
+
+def test_ruby_docker_repo_faraday_parser(test_result_faraday):
+    assert test_result_faraday is not None
+    assert isinstance(test_result_faraday["parser"], dict)
+
+    report = test_result_faraday["parser"]['summary']
+    assert report["total"] == 1064
+    assert report["passed"] == 1064
+    assert report["collected"] == 1064
+    assert report["failed"] == 0
+    assert test_result_faraday["parser"]["status"] == "passed"
