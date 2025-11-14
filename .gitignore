@@ -27,3 +27,7 @@ outputs/
 
 *.pickle
 *.ipynb
+
+repo_cache/
+.*/
+data/

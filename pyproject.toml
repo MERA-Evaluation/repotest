@@ -14,7 +14,7 @@ include = ["repotest*"]  # ["*"] by default
 
 [project]
 name = "repositorytest"
-version = "0.5.10"
+version = "0.5.11"
 license = "MIT"
 description = "A tool for cloning and testing repositories (docker or local, interface is the same)."
 readme = "README.md"
@@ -44,7 +44,8 @@ dependencies = [
     "psutil",
     "fire>=0.6.0",
     "ipython==8.12.2", # bug fire & old ipython version
-    "coverage>=7.7.0"
+    "coverage>=7.7.0",
+    "boto3>=1.40.73",
 ]
 
 [project.urls]
