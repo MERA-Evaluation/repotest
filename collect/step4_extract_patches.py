@@ -320,9 +320,9 @@ def extract_patches(
                 test_patch, patch = split_test_patch(full_diff, test_files_regexp)
                 
                 # Add to row
-                row_dict['full_patch'] = full_diff
-                row_dict['test_patch'] = test_patch
-                row_dict['patch'] = patch
+                row_dict['full_patch'] = full_diff + (full'\n' if full_diff and full_diff[-1] != '\n' else '')
+                row_dict['test_patch'] = test_patch + (test_'\n' if test_patch and test_patch[-1] != '\n' else '')
+                row_dict['patch'] = patch + ('\n' if patch and patch[-1] != '\n' else '')
                 row_dict['patch_extraction_status'] = 'success'
                 
                 logger.debug(f"Extracted patches for {item_id}: full={len(full_diff)}, test={len(test_patch)}, patch={len(patch)}")
