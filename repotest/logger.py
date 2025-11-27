@@ -79,3 +79,26 @@ def change_file_logger_level(level: int) -> None:
             handler.setLevel(level)
             logger.info("File log level changed to: %s", logging.getLevelName(level))
             break
+
+
+class disable_all_logs:
+    """Context manager to temporarily disable all logging.
+    
+    Attributes
+    ----------
+    handlers_levels : dict
+        Dictionary storing original handler levels for restoration.
+    """
+    handlers_levels = {}
+    
+    def __enter__(self):
+        for handler in logger.handlers:
+            self.handlers_levels[handler] = handler.level
+            handler.level = 1000
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Restore the previous logging level
+        for handler in logger.handlers:
+            handler.level = self.handlers_levels[handler]
+        return False

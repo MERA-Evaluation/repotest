@@ -13,6 +13,7 @@ from shutil import copytree, rmtree
 import git
 from repotest.constants import DEFAULT_CACHE_FOLDER, REPOTEST_MAIN_FOLDER
 from repotest.core.exceptions import GitCheckoutFailed, GitCloneFailed
+from repotest.logger import disable_all_logs
 
 logger = logging.getLogger("repotest")
 
@@ -200,6 +201,67 @@ class AbstractRepo(ABC):
             logger.critical("git_patch %s", git_patch)
             logger.critical(e, exc_info=True)
             raise e
+
+    @classmethod
+    def __get_block_list(cls, patch: str) -> str:
+        """Parse patch into individual file blocks.
+
+        Parameters
+        ----------
+        patch : str
+            Multi-file git diff patch string.
+
+        Returns
+        -------
+        list of str
+            Individual file blocks with trailing newlines.
+        """
+        block_list = []
+        block = ""
+        for line in patch.split('\n'):
+            if line.startswith("diff --git a/"):
+                if block:
+                    block_list.append(block)
+                    block = ""
+            block += line + '\n'
+        
+        if block:
+            block_list.append(block)
+
+        for ind in range(len(block_list)):
+            b = block_list[ind]
+            if b and (b[-1] !='\n'):
+                block_list[ind] += '\n'
+        
+        return block_list
+
+    def _half_apply_patch(self, patch: str) -> str:
+        """Apply patch partially, skipping failing blocks.
+
+        Parameters
+        ----------
+        patch : str
+            Multi-file git diff patch string.
+
+        Returns
+        -------
+        str
+            Concatenated blocks that applied successfully.
+        """
+        block_list = self.__get_block_list(patch)
+        new_block_list = []
+        bad_index = []
+        with disable_all_logs():
+            for i, b in enumerate(block_list):
+                try:
+                    self.apply_patch(b)
+                    new_block_list.append(b)
+                except:
+                    bad_index.append(i)
+        
+        logger.critical(f"drop indexes: {bad_index}")
+        new_block_list = ''.join(new_block_list)
+        return new_block_list
 
     def get_git_diff(self):
         """Get git diff"""
