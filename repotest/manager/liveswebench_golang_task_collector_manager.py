@@ -4,12 +4,18 @@ from typing import Dict, List, Union, Tuple
 
 from repotest.constants import OPTIMAL_CPU_NUM
 from repotest.core.docker.golang import GoLangDockerRepo
+from repotest.logger import disable_all_logs
 from tqdm import tqdm
 
 
 class LiveSWEBenchGoTaskCollectorManager:
     """
     Manager for collecting and evaluating SWE-Bench Go tasks.
+    
+    Handles:
+    - Applying patches (test and gold)
+    - Running tests
+    - Computing correctness metrics
     """
     
     REQUIRED_COLUMNS = [
@@ -97,6 +103,14 @@ class LiveSWEBenchGoTaskCollectorManager:
     def get_task_correctness(dct_test_after: dict, dct_test_gold: dict) -> dict:
         """
         Compute correctness metrics by comparing test results.
+        
+        TASK CORRECT IF:
+        - There's at least one passing test in dct_test_gold that doesn't pass in dct_test_after
+        - dct_test_gold is not empty by tests
+        
+        task_perfect:
+        - len(success_gold) > len(success_after)
+        - AND (success_after & success_gold) == success_after
         """
         summary_after = dct_test_after.get("report", {}).get("summary", {}) if dct_test_after else {}
         summary_gold = dct_test_gold.get("report", {}).get("summary", {}) if dct_test_gold else {}
@@ -143,42 +157,46 @@ class LiveSWEBenchGoTaskCollectorManager:
 
     def _apply_patch_safe(self, repo, patch: str, task: Dict, patch_label: str = "patch") -> bool:
         """
-        Apply a patch safely with fallback to half_apply_patch.
+        Apply a patch: first fix via _half_apply_patch, then apply.
         """
         if not patch or str(patch) == "nan" or not str(patch).strip():
             return True
 
         try:
-            repo.apply_patch(patch)
-            return True
-        except Exception as e:
-            task.setdefault("patch_fix_attempts", []).append({
-                "label": patch_label,
-                "direct_apply_error": str(e)
-            })
-            
-            try:
-                repo.clean()
+            with disable_all_logs():
                 fixed_patch = repo._half_apply_patch(patch)
-                
-                task.setdefault("patch_fixes", {})[patch_label] = {
-                    "original_len": len(patch),
-                    "fixed_len": len(fixed_patch),
-                    "was_fixed": True
-                }
-                
-                repo.clean()
-                repo.apply_patch(fixed_patch)
+            
+            if not fixed_patch or not fixed_patch.strip():
                 return True
-            except Exception as e2:
-                msg = f"Error applying {patch_label}: {e2}"
-                task.setdefault("exceptions", []).append({patch_label: str(e2)})
-                task["exception"] = msg
-                if self.raise_exception:
-                    raise
-                return False
+            
+            repo.clean()
+            repo.apply_patch(fixed_patch)
+            return True
+            
+        except Exception as e:
+            task["exception"] = f"Error applying {patch_label}: {e}"
+            if self.raise_exception:
+                raise
+            return False
+
+    def _stop_repo_safe(self, repo) -> None:
+        """Safely stop repository container"""
+        if repo is None:
+            return
+        try:
+            repo.stop()
+        except Exception:
+            pass
 
     def inplace_build_and_eval_single(self, task: Dict[str, Union[str, int]]) -> None:
+        """
+        Build environment and evaluate a single task.
+        
+        Process:
+        1. Create repo, apply test_patch, run tests -> dct_test_after
+        2. Create fresh repo, apply test_patch + gold patch, run tests -> dct_test_gold
+        3. Compute correctness
+        """
         task.setdefault("exception", "")
         task.setdefault("dct_test_after", {})
         task.setdefault("dct_test_gold", {})
@@ -191,7 +209,6 @@ class LiveSWEBenchGoTaskCollectorManager:
         repo_gold = None
 
         try:
-            # === STEP 1: Run tests with test_patch only ===
             repo_after = self.RepoClass(
                 repo=task["repo_name"],
                 base_commit=task["base_commit"],
@@ -201,7 +218,7 @@ class LiveSWEBenchGoTaskCollectorManager:
                 if not self._apply_patch_safe(repo_after, test_patch, task, "test_patch"):
                     task["run_status"] = 0
                     return
-
+                
             try:
                 dct_test_after = repo_after.run_test() or {}
             except Exception as e:
@@ -215,14 +232,9 @@ class LiveSWEBenchGoTaskCollectorManager:
             task["dct_test_after"] = json.dumps(dct_test_after)
             task["test_after_summary"] = dct_test_after.get("report", {}).get("summary", {})
 
-            # Закрываем первый контейнер перед созданием второго
-            try:
-                repo_after.stop()
-            except Exception:
-                pass
+            self._stop_repo_safe(repo_after)
             repo_after = None
 
-            # === STEP 2: Run tests with test_patch + gold patch ===
             repo_gold = self.RepoClass(
                 repo=task["repo_name"],
                 base_commit=task["base_commit"],
@@ -266,12 +278,8 @@ class LiveSWEBenchGoTaskCollectorManager:
             if self.raise_exception:
                 raise
         finally:
-            for repo in [repo_after, repo_gold]:
-                if repo is not None:
-                    try:
-                        repo.clean()
-                    except Exception:
-                        pass
+            self._stop_repo_safe(repo_after)
+            self._stop_repo_safe(repo_gold)
 
     def _build_and_eval_task_parallel(self, task_list: List[Dict]) -> None:
         """Execute tasks in parallel using ThreadPoolExecutor"""
@@ -287,7 +295,11 @@ class LiveSWEBenchGoTaskCollectorManager:
                 assert col in task, f"there is no {col} at ind={ind}"
 
     def inplace_build_and_eval(self, task_list: List[Dict]) -> None:
-        """Main entry point: build and evaluate all tasks."""
+        """
+        Main entry point: build and evaluate all tasks.
+        
+        Tasks are modified in-place with results.
+        """
         self.validate_input(task_list)
 
         if self.n_jobs == 1:
