@@ -19,6 +19,31 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def ensure_proper_patch_ending(patch_text: str) -> str:
+    """
+    Ensure patch ends with proper newline for git apply.
+    Git requires patches to end with double newline (\n\n).
+    """
+    if not patch_text:
+        return patch_text
+    
+    # Ensure at least one trailing newline
+    if not patch_text.endswith('\n'):
+        patch_text = patch_text + '\n'
+    
+    # Check if we need an additional empty line
+    lines = patch_text.rstrip('\n').split('\n')
+    if lines:
+        last_line = lines[-1]
+        # If last line is code or context, add empty line
+        if last_line and (last_line.startswith((' ', '+', '-')) or 
+                         last_line.strip() in ('}', ')', ']', ';', '{')):
+            if not patch_text.endswith('\n\n'):
+                patch_text = patch_text + '\n'
+    
+    return patch_text
+
+
 def clone_repo(repo_url: str, target_dir: str, depth: int = 1) -> bool:
     """Clone a git repository."""
     logger.debug(f"Cloning {repo_url} to {target_dir}")
@@ -114,18 +139,25 @@ def get_git_diff(repo_dir: str, base_commit: str, merge_commit: str) -> Optional
 
 
 def parse_diff_by_file(full_diff: str) -> dict:
-    """Parse full diff into per-file diffs."""
+    """
+    Parse full diff into per-file diffs.
+    
+    Returns a dictionary mapping filepath to diff content.
+    """
     file_diffs = {}
     current_file = None
     current_diff = []
     
     for line in full_diff.split('\n'):
         if line.startswith('diff --git'):
+            # Save previous file's diff
             if current_file:
                 file_diffs[current_file] = '\n'.join(current_diff)
             
+            # Parse new file
             parts = line.split()
             if len(parts) >= 4:
+                # Extract filepath (remove a/ or b/ prefix)
                 filepath = parts[2].lstrip('a/')
                 current_file = filepath
                 current_diff = [line]
@@ -135,6 +167,7 @@ def parse_diff_by_file(full_diff: str) -> dict:
         elif current_file:
             current_diff.append(line)
     
+    # Save last file's diff
     if current_file:
         file_diffs[current_file] = '\n'.join(current_diff)
     
@@ -143,9 +176,25 @@ def parse_diff_by_file(full_diff: str) -> dict:
 
 def split_test_patch(
     full_diff: str,
-    test_files_regexp: str = r"(tests?/|test_.*\.py$|.*_test\.py$)"
+    test_files_regexp: str = r"(tests?/|test_.*\.py$|.*_test\.py$|.*_test\.go$|test.*\.go$)"
 ) -> Tuple[str, str]:
-    """Split diff into test and non-test patches."""
+    """
+    Split diff into test and non-test patches.
+    
+    Parameters
+    ----------
+    full_diff : str
+        Full git diff
+    test_files_regexp : str
+        Regex pattern to match test files
+        
+    Returns
+    -------
+    test_patch : str
+        Patch containing only test files
+    patch : str
+        Patch containing only non-test files
+    """
     logger.debug(f"Splitting patch with test pattern: {test_files_regexp}")
     
     file_diffs = parse_diff_by_file(full_diff)
@@ -172,7 +221,7 @@ def extract_patches(
     input_file: str,
     output_file: str,
     cache_dir: str = "data/repo_cache",
-    test_files_regexp: str = r"(tests?/|test_.*\.py$|.*_test\.py$)",
+    test_files_regexp: str = r"(tests?/|test_.*\.py$|.*_test\.py$|.*_test\.go$|test.*\.go$)",
     checkpoint_file: Optional[str] = None
 ):
     """
@@ -187,7 +236,7 @@ def extract_patches(
     cache_dir : str
         Directory for caching cloned repositories
     test_files_regexp : str
-        Regex pattern to match test files
+        Regex pattern to match test files (supports Python and Go)
     checkpoint_file : str, optional
         Checkpoint file path
     """
@@ -212,7 +261,8 @@ def extract_patches(
     
     # Convert datetime columns to strings
     for col in ['issue_created_at', 'issue_closed_at', 'issue_updated_at']:
-        df[col] = df[col].astype(str)
+        if col in df.columns:
+            df[col] = df[col].astype(str)
     
     # Filter valid rows
     df['has_valid_mapping'] = df['map_issue_pr_ok'].fillna(False)
@@ -226,10 +276,11 @@ def extract_patches(
     num_commits_ok = (df['has_base_commit'] & df['has_merge_commit']).sum()
     num_will_process = df['should_process'].sum()
     
-    logger.info(f"All: {num_all}")
-    logger.info(f"map_issue_pr_ok: {num_map_ok}")
-    logger.info(f"commit is not None: {num_commits_ok}")
-    logger.info(f"will process: {num_will_process}")
+    logger.info(f"Statistics:")
+    logger.info(f"  All rows: {num_all}")
+    logger.info(f"  map_issue_pr_ok: {num_map_ok}")
+    logger.info(f"  Has both commits: {num_commits_ok}")
+    logger.info(f"  Will process: {num_will_process}")
     
     # Split into valid and invalid
     df_valid = df[df['should_process']].copy()
@@ -271,13 +322,15 @@ def extract_patches(
             repo_url = f"https://github.com/{repo_name}.git"
             repo_dir = os.path.join(cache_dir, repo_name.replace('/', '_'))
             
-            # Cleanup repo if requested
+            # Cleanup previous repo if different
             if os.path.exists(repo_dir) and (pred_repo is not None) and (pred_repo != repo_name):
-                shutil.rmtree(repo_dir)
-                logger.debug(f"Cleaned up {repo_dir}")
+                try:
+                    shutil.rmtree(repo_dir)
+                    logger.debug(f"Cleaned up {repo_dir}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up {repo_dir}: {e}")
+            
             pred_repo = repo_name
-            
-            
             
             row_dict = row.to_dict()
             
@@ -292,6 +345,7 @@ def extract_patches(
                         chk_f.write(item_id + '\n')
                         chk_f.flush()
                         out_f.flush()
+                        processed_items.add(item_id)
                         continue
                 
                 # Fetch commits if needed
@@ -303,6 +357,7 @@ def extract_patches(
                     chk_f.write(item_id + '\n')
                     chk_f.flush()
                     out_f.flush()
+                    processed_items.add(item_id)
                     continue
                 
                 # Get diff
@@ -314,19 +369,24 @@ def extract_patches(
                     chk_f.write(item_id + '\n')
                     chk_f.flush()
                     out_f.flush()
+                    processed_items.add(item_id)
                     continue
                 
                 # Split into test and non-test patches
                 test_patch, patch = split_test_patch(full_diff, test_files_regexp)
                 
+                # Ensure proper endings for all patches
+                full_diff = ensure_proper_patch_ending(full_diff)
+                test_patch = ensure_proper_patch_ending(test_patch)
+                patch = ensure_proper_patch_ending(patch)
+                
                 # Add to row
-                row_dict['full_patch'] = full_diff + (full'\n' if full_diff and full_diff[-1] != '\n' else '')
-                row_dict['test_patch'] = test_patch + (test_'\n' if test_patch and test_patch[-1] != '\n' else '')
-                row_dict['patch'] = patch + ('\n' if patch and patch[-1] != '\n' else '')
+                row_dict['full_patch'] = full_diff
+                row_dict['test_patch'] = test_patch
+                row_dict['patch'] = patch
                 row_dict['patch_extraction_status'] = 'success'
                 
                 logger.debug(f"Extracted patches for {item_id}: full={len(full_diff)}, test={len(test_patch)}, patch={len(patch)}")
-                
                 
             except Exception as e:
                 logger.error(f"Exception processing {item_id}: {e}")
@@ -342,6 +402,7 @@ def extract_patches(
             processed_items.add(item_id)
     
     logger.info(f"Done! Saved to {output_file}")
+    logger.info(f"Processed {len(processed_items)} total items")
 
 
 if __name__ == "__main__":
