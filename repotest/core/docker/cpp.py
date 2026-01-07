@@ -201,6 +201,7 @@ def _parse_cpp_json(content: str) -> Dict[str, object]:
 
 
 class CppDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing C++ repositories in a Docker container."""
     
     def __init__(self, 
                  repo: str, 

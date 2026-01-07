@@ -20,7 +20,7 @@ logger = logging.getLogger("repotest")
     
 
 class JavaScriptDockerRepo(AbstractDockerRepo):
-    """A class for managing and testing Python repositories in a Docker container."""
+    """A class for managing and testing JavaScript repositories in a Docker container."""
 
     def __init__(
         self,
@@ -147,7 +147,7 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
     def _mock_path(self, command: str) -> str:
         """Ensure PATH and PYTHONPATH are set correctly."""
         prefix = """ulimit -n 65535;"""
-        # For symplicity we are working in mount directory
+        # For simplicity we are working in mount directory
         # echo "">report_pytest.json; - create the file, without this line, there is a 30% change of OSError
         # Normal way to fix it - not working at mount directory, but it will overcomplex the whole project a lot
         return command if command.startswith(prefix) else prefix + command
@@ -218,7 +218,7 @@ class JavaScriptDockerRepo(AbstractDockerRepo):
             logger.debug("Find jest test")
             return self.read_jest_json()
         
-        raise ValueError("Unexpected behaviour, not all corner cases were processeded")
+        raise ValueError("Unexpected behaviour, not all corner cases were processed")
 
     def run_test(
         self,

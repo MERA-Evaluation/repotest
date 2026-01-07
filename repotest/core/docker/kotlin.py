@@ -137,6 +137,7 @@ def parse_junit_xml_report(xml_path: str) -> Dict[str, object]:
 
 
 class KotlinDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing Kotlin repositories in a Docker container."""
     
     def __init__(
         self,

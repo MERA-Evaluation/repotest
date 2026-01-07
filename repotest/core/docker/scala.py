@@ -155,6 +155,7 @@ def parse_junit_xml_report(xml_path: str) -> Dict[str, object]:
 
 
 class ScalaDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing Scala repositories in a Docker container."""
     
     def __init__(
         self, 

@@ -147,7 +147,7 @@ export PATH=$PYTHONPATH:$PATH;
 echo "">report_pytest.json;
 ulimit -n 65535;
 """
-        # For symplicity we are working in mount directory
+        # For simplicity we are working in mount directory
         # echo "">report_pytest.json; - create the file, without this line, there is a 30% change of OSError
         # Normal way to fix it - not working at mount directory, but it will overcomplex the whole project a lot
         return command if command.startswith(prefix) else prefix + command

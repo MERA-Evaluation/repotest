@@ -194,6 +194,7 @@ def _parse_go_json(content: str) -> Dict[str, object]:
     return result
 
 class GoLangDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing Go repositories in a Docker container."""
     def __init__(self, 
                  repo: str, 
                  base_commit: str,

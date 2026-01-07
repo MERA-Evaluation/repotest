@@ -93,6 +93,7 @@ def parse_php_test_report(report_path: str) -> Dict[str, object]:
 
 
 class PhpDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing PHP repositories in a Docker container."""
     
     def __init__(self,
                  repo: str,

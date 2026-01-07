@@ -1,4 +1,4 @@
-# test_typescript_docker_repo.py
+# test_javascript_docker_repo.py
 import pytest
 from repotest.core.docker.javascript import JavaScriptDockerRepo
 
@@ -38,7 +38,7 @@ def test_result_mocha(cache_mode):
     return result
 
 
-def test_typescript_docker_repo_mocha_report(test_result_mocha):
+def test_javascript_docker_repo_mocha_report(test_result_mocha):
     assert test_result_mocha is not None
     # Test machine readable format
     assert isinstance(test_result_mocha["report"], dict)
@@ -56,7 +56,7 @@ def test_typescript_docker_repo_mocha_report(test_result_mocha):
     # assert parser["summary"]["passed"] == 1806
     # assert parser["summary"]["failed"] == 0
 
-def test_typescript_docker_repo_mocha_parser(test_result_mocha):
+def test_javascript_docker_repo_mocha_parser(test_result_mocha):
     assert test_result_mocha is not None
     # Test machine readable format
     assert isinstance(test_result_mocha["parser"], dict)
@@ -83,7 +83,7 @@ def test_result_jest(cache_mode):
     return result
 
 
-def test_typescript_docker_repo_jest_report(test_result_jest):
+def test_javascript_docker_repo_jest_report(test_result_jest):
     assert test_result_jest is not None
     assert isinstance(test_result_jest["report"], dict)
 
@@ -101,7 +101,7 @@ def test_typescript_docker_repo_jest_report(test_result_jest):
     # assert parser["summary"]["passed"] == 20
     # assert parser["summary"]["failed"] == 0
 
-def test_typescript_docker_repo_jest_parser(test_result_jest):
+def test_javascript_docker_repo_jest_parser(test_result_jest):
     assert test_result_jest is not None
     assert isinstance(test_result_jest["parser"], dict)
 

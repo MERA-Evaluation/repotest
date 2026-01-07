@@ -1,5 +1,5 @@
 """
-Check instalations of
+Check installations of
 conda, mvn, docker
 """
 
@@ -29,7 +29,7 @@ export PATH="$HOME/miniconda/bin:$PATH"
         )
 
 
-def set_java_home_if_not_setted():
+def set_java_home_if_not_set():
     import os
 
     if "JAVA_HOME" in os.environ:
@@ -50,7 +50,7 @@ def set_java_home_if_not_setted():
         print(
             'command "'
             + "conda env list | awk -v env=\"jdk_20\" '$1 == env {print $2}'"
-            + '" was not succeded'
+            + '" was not succeeded'
         )
 
 
@@ -135,7 +135,7 @@ or restart your system for group changes to take effect.
 def check_all():
     for checker in [
         check_conda_installed,
-        set_java_home_if_not_setted,
+        set_java_home_if_not_set,
         check_mvn_installed,
         check_docker_installed,
     ]:

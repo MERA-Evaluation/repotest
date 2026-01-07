@@ -18,8 +18,9 @@ from repotest.constants import (DEFAULT_CACHE_FOLDER,
 from repotest.core.base import AbstractRepo
 from repotest.core.exceptions import (DockerStartContainerFailed,
                                       TimeOutException)
-from tenacity import retry, stop_after_attempt, wait_chain, wait_fixed
 from repotest.core.docker.types import CacheMode
+
+from tenacity import retry, stop_after_attempt, wait_chain, wait_fixed
 
 logger = logging.getLogger("repotest")
 
@@ -105,7 +106,7 @@ class AbstractDockerRepo(AbstractRepo):
         return docker.from_env(timeout=DEFAULT_COMMIT_TIMEOUT_INT)
 
     @cached_property
-    def RANDDOM_CONTAINER_CPUSER_CPUS(self):
+    def RANDOM_CONTAINER_CPUS_CPUS(self):
         # ToDo: handle case 1 repo = 1,2,3 cpu
         # ToDo: handle case task1_cpu != task2_cpu
 
@@ -131,7 +132,7 @@ class AbstractDockerRepo(AbstractRepo):
             wait_fixed(1),  # First retry after 1s
             wait_fixed(3),  # Second retry after 3s,
         ),
-        before_sleep=lambda retry_state: logger.warning("%d/%d attemps", retry_state.attempt_number, 2)
+        before_sleep=lambda retry_state: logger.warning("%d/%d attempts", retry_state.attempt_number, 2)
     )
     def start_container(
         self,
@@ -161,7 +162,7 @@ class AbstractDockerRepo(AbstractRepo):
                                                                remove={remove},
                                                                mem_limit={self.MEM_LIMIT},  # Limit container memory to 10GB
                                                                environment="PIP_ROOT_USER_ACTION": "ignore",
-                                                               cpus={self.RANDDOM_CONTAINER_CPUSER_CPUS}                     
+                                                               cpus={self.RANDOM_CONTAINER_CPUS_CPUS}                     
                                                               )"""
             )
 
@@ -182,7 +183,7 @@ class AbstractDockerRepo(AbstractRepo):
                     "PYTHON_SAVE_JSON_REPORT": "1",
                     "PYTHONUNBUFFERED": "1",
                 },
-                cpuset_cpus=self.RANDDOM_CONTAINER_CPUSER_CPUS,
+                cpuset_cpus=self.RANDOM_CONTAINER_CPUS_CPUS,
             )
         except APIError as e:
             logger.warning("start_container fail, try again")

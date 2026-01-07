@@ -17,6 +17,7 @@ logger = logging.getLogger("repotest")
     
 
 class TypeScriptDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing TypeScript repositories in a Docker container."""
 
     def __init__(
         self,

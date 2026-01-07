@@ -136,6 +136,7 @@ def _parse_rspec_json(data: Dict) -> Dict[str, object]:
 
 
 class RubyDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing Ruby repositories in a Docker container."""
     def __init__(self, 
                  repo: str, 
                  base_commit: str, 

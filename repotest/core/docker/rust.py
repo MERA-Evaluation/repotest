@@ -133,6 +133,7 @@ def parse_rust_test_output(stdout: str, stderr: str) -> Dict[str, object]:
 
 
 class RustDockerRepo(AbstractDockerRepo):
+    """A class for managing and testing Rust repositories in a Docker container."""
     
     def __init__(
         self, 

@@ -1,4 +1,4 @@
-# test_typescript_docker_repo.py
+# test_python_docker_repo.py
 import pytest
 from repotest.core.docker.python import PythonDockerRepo
 
@@ -14,7 +14,7 @@ def repo(request):
 
     return repo_instance
 
-def test_typescript_docker_repo(repo):
+def test_python_docker_repo(repo):
     assert repo.repo == "niklashenning/pytablericons"
     assert repo.base_commit == "29f2138c6399c04b4a0818503995b35627aaa754"
 
