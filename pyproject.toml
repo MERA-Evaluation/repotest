@@ -81,6 +81,8 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
+    "--log-cli-level=INFO",
+    "--log-file-level=INFO",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

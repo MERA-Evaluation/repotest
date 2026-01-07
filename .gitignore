@@ -18,6 +18,7 @@ assets/
 
 # Ignore logs
 repotest/logs/
+tests/logs/
 
 # Ignore dist
 dist/
