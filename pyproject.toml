@@ -14,7 +14,7 @@ include = ["repotest*"]  # ["*"] by default
 
 [project]
 name = "repositorytest"
-version = "0.5.17"
+version = "0.5.19"
 license = "MIT"
 description = "A tool for cloning and testing repositories (docker or local, interface is the same)."
 readme = "README.md"
@@ -81,8 +81,8 @@ addopts = [
     "-v",
     "--tb=short",
     "--strict-markers",
-    "--log-cli-level=INFO",
-    "--log-file-level=INFO",
+    "--log-cli-level=DEBUG",
+    "--log-file-level=DEBUG",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

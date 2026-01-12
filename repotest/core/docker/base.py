@@ -6,7 +6,8 @@ from functools import cached_property
 from typing import List
 
 import docker
-from docker.errors import APIError, NotFound
+from docker.errors import APIError, ImageNotFound, NotFound
+
 from git import GitCommandError
 # from repotest.utils.timeout import  timeout_decorator, TimeOutException
 from repotest.constants import (DEFAULT_CACHE_FOLDER,
@@ -222,7 +223,7 @@ class AbstractDockerRepo(AbstractRepo):
             self.docker_client.images.remove(image.id, force=True)
             logger.debug(f"Image '{self.image_name}' deleted successfully.")
 
-        except docker.errors.ImageNotFound:
+        except NotFound:
             # Handle the case where the image does not exist
             logger.info(f"Image '{self.image_name}' does not exist.")
 
@@ -355,7 +356,7 @@ class AbstractDockerRepo(AbstractRepo):
         try:
             volume = self.docker_client.volumes.get(volume_name)
             logger.debug(f"Volume '{volume_name}' exists.")
-        except docker.errors.NotFound:
+        except NotFound:
             logger.info(f"Volume '{volume_name}' does not exist.")
             volume = self.docker_client.volumes.create(name=volume_name)
             logger.info(f"Volume created: {volume.name}")
@@ -365,7 +366,7 @@ class AbstractDockerRepo(AbstractRepo):
             volume = self.docker_client.volumes.get(volume_name)
             volume.remove()
             logger.info("Volume volume_name deleted.")
-        except docker.errors.NotFound:
+        except NotFound:
             logger.warning("Volume volume_name not found.")
 
     # def stop_container(self, timeout=0):
