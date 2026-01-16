@@ -1,7 +1,7 @@
 """
 Step 1: Repository Collection from S3 + GitHub Details
 
-Collects repositories from S3, filters by language and tests,
+Collects repositories from S3, filters by language and test framework,
 fetches full GitHub details for passed repos, and saves in collect_repos.py format.
 """
 import json
@@ -263,6 +263,7 @@ def collect_repos_from_s3(
                             detailed_repo['_s3_key'] = json_file_key
                             detailed_repo['_date_folder'] = date_folder
                             detailed_repo['_language_filter'] = language_filter.language_name
+                            detailed_repo['_test_framework'] = language_filter.language_name.split('-')[-1].lower() if '-' in language_filter.language_name else 'unknown'
                             out_f.write(json.dumps(detailed_repo, ensure_ascii=False) + '\n')
                             stats['filtered_repos'] += 1
                         chk_f.write(json_file_key + '\n')
@@ -300,6 +301,72 @@ def collect_repos_from_s3(
     logger.info("=" * 80)
 
 
+def collect_js_jest_repos_from_s3(
+    output_file: str,
+    s3_bucket: str = "test",
+    s3_prefix: str = "test/test",
+    aws_profile: Optional[str] = "maintainer",
+    github_token: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    checkpoint_file: Optional[str] = None,
+    max_retries: int = 3,
+    fetch_detailed_info: bool = True,
+    detailed_info_delay: float = 1.0
+):
+    """Convenience function for JavaScript Jest repos."""
+    from collect.lang.s3_javascript_jest import JavaScriptJestFilter
+    language_filter = JavaScriptJestFilter()
+    
+    collect_repos_from_s3(
+        output_file=output_file,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
+        language_filter=language_filter,
+        github_token=github_token,
+        aws_profile=aws_profile,
+        start_date=start_date,
+        end_date=end_date,
+        checkpoint_file=checkpoint_file,
+        max_retries=max_retries,
+        fetch_detailed_info=fetch_detailed_info,
+        detailed_info_delay=detailed_info_delay
+    )
+
+
+def collect_js_mocha_repos_from_s3(
+    output_file: str,
+    s3_bucket: str = "test",
+    s3_prefix: str = "test/test",
+    aws_profile: Optional[str] = "maintainer",
+    github_token: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    checkpoint_file: Optional[str] = None,
+    max_retries: int = 3,
+    fetch_detailed_info: bool = True,
+    detailed_info_delay: float = 1.0
+):
+    """Convenience function for JavaScript Mocha repos."""
+    from collect.lang.s3_javascript_mocha import JavaScriptMochaFilter
+    language_filter = JavaScriptMochaFilter()
+    
+    collect_repos_from_s3(
+        output_file=output_file,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
+        language_filter=language_filter,
+        github_token=github_token,
+        aws_profile=aws_profile,
+        start_date=start_date,
+        end_date=end_date,
+        checkpoint_file=checkpoint_file,
+        max_retries=max_retries,
+        fetch_detailed_info=fetch_detailed_info,
+        detailed_info_delay=detailed_info_delay
+    )
+
+
 def collect_golang_repos_from_s3(
     output_file: str,
     s3_bucket: str = "test",
@@ -333,76 +400,10 @@ def collect_golang_repos_from_s3(
     )
 
 
-def collect_javascript_repos_from_s3(
-    output_file: str,
-    s3_bucket: str = "test",
-    s3_prefix: str = "test/test",
-    aws_profile: Optional[str] = "maintainer",
-    github_token: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    checkpoint_file: Optional[str] = None,
-    max_retries: int = 3,
-    fetch_detailed_info: bool = True,
-    detailed_info_delay: float = 1.0
-):
-    """Convenience function for JavaScript repos."""
-    from collect.lang.s3_javascript import JavaScriptFilter
-    language_filter = JavaScriptFilter()
-    
-    collect_repos_from_s3(
-        output_file=output_file,
-        s3_bucket=s3_bucket,
-        s3_prefix=s3_prefix,
-        language_filter=language_filter,
-        github_token=github_token,
-        aws_profile=aws_profile,
-        start_date=start_date,
-        end_date=end_date,
-        checkpoint_file=checkpoint_file,
-        max_retries=max_retries,
-        fetch_detailed_info=fetch_detailed_info,
-        detailed_info_delay=detailed_info_delay
-    )
-
-
-def collect_typescript_repos_from_s3(
-    output_file: str,
-    s3_bucket: str = "test",
-    s3_prefix: str = "test/test",
-    aws_profile: Optional[str] = "maintainer",
-    github_token: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    checkpoint_file: Optional[str] = None,
-    max_retries: int = 3,
-    fetch_detailed_info: bool = True,
-    detailed_info_delay: float = 1.0
-):
-    """Convenience function for TypeScript repos."""
-    from collect.lang.s3_typescript import TypeScriptFilter
-    language_filter = TypeScriptFilter()
-    
-    collect_repos_from_s3(
-        output_file=output_file,
-        s3_bucket=s3_bucket,
-        s3_prefix=s3_prefix,
-        language_filter=language_filter,
-        github_token=github_token,
-        aws_profile=aws_profile,
-        start_date=start_date,
-        end_date=end_date,
-        checkpoint_file=checkpoint_file,
-        max_retries=max_retries,
-        fetch_detailed_info=fetch_detailed_info,
-        detailed_info_delay=detailed_info_delay
-    )
-
-
 if __name__ == "__main__":
     fire.Fire({
+        'jest': collect_js_jest_repos_from_s3,
+        'mocha': collect_js_mocha_repos_from_s3,
         'golang': collect_golang_repos_from_s3,
-        'javascript': collect_javascript_repos_from_s3,
-        'typescript': collect_typescript_repos_from_s3,
         'custom': collect_repos_from_s3
     })

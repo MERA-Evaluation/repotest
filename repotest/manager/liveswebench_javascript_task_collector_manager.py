@@ -35,9 +35,14 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         raise_exception: bool = True,
         verbose_all: bool = False,
         time_scale_factor="auto",
+        test_system: str = "jest"  # "jest" or "mocha"
     ):
         self.RepoClass = JavaScriptDockerRepo
         self.n_jobs = n_jobs
+        self.test_system = test_system.lower()
+
+        if self.test_system not in ["jest", "mocha"]:
+            raise ValueError(f"test_system must be 'jest' or 'mocha', got: {self.test_system}")
 
         if time_scale_factor == "auto":
             self.time_scale_factor = self.n_jobs
@@ -188,63 +193,29 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         except Exception:
             pass
 
-    def _detect_test_framework(self, repo) -> str:
-        """
-        Detect whether to use Jest or Mocha by reading package.json.
-        Checks dependencies, devDependencies, and scripts.
-        Returns 'jest' or 'mocha', defaults to 'jest'.
-        """
-        try:
-            import os
-            import json
+    def _get_build_command(self) -> str:
+        """Get build command based on test system"""
+        base_cmd = "npm ci --legacy-peer-deps --loglevel=error || npm install --legacy-peer-deps --loglevel=error"
+        
+        if self.test_system == "mocha":
+            return f"{base_cmd};npm install mocha-junit-reporter --legacy-peer-deps --loglevel=error"
+        else:  # jest
+            return f"{base_cmd};npm install jest --save-dev --legacy-peer-deps --loglevel=error"
 
-            package_json_path = os.path.join(repo.repo_path, 'package.json')
-            
-            if not os.path.exists(package_json_path):
-                return 'jest'
-            
-            with open(package_json_path, 'r', encoding='utf-8') as f:
-                package_data = json.load(f)
-            
-            dependencies = package_data.get('dependencies', {})
-            dev_dependencies = package_data.get('devDependencies', {})
-            all_deps = {**dependencies, **dev_dependencies}
-            
-            scripts = package_data.get('scripts', {})
-            test_script = scripts.get('test', '')
-            
-            test_script_lower = test_script.lower()
-            if 'mocha' in test_script_lower and 'jest' not in test_script_lower:
-                return 'mocha'
-            if 'jest' in test_script_lower and 'mocha' not in test_script_lower:
-                return 'jest'
-            
-            has_mocha = 'mocha' in all_deps
-            has_jest = 'jest' in all_deps or any('jest' in dep for dep in all_deps.keys())
-
-            if has_mocha and has_jest:
-                if 'mocha' in test_script_lower:
-                    return 'mocha'
-                elif 'jest' in test_script_lower:
-                    return 'jest'
-                return 'jest'
-            
-            if has_mocha:
-                return 'mocha'
-            if has_jest:
-                return 'jest'
-            
-            return 'jest'
-            
-        except Exception as e:
-            return 'jest'
-
-    def _get_test_command(self, framework: str) -> str:
-        """Get the appropriate test command based on framework"""
-        if framework == 'mocha':
-            return 'npm test -- --reporter mocha-junit-reporter'
-        else:
-            return 'npx jest --json --outputFile="jest-results.json"'
+    def _get_test_command(self) -> str:
+        """Get test command based on test system"""
+        if self.test_system == "mocha":
+            return "npm test -- --reporter mocha-junit-reporter"
+        else:  # jest
+            return (
+                        "bash -lc \""
+                        "npx jest "
+                        "--json --outputFile=jest-results.json "
+                        "--passWithNoTests "
+                        "--runInBand "
+                        "--forceExit 2>&1 || true"
+                        "\""
+                    )
 
     def inplace_build_and_eval_single(self, task: Dict[str, Union[str, int]]) -> None:
         """
@@ -259,6 +230,7 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         task.setdefault("dct_test_after", {})
         task.setdefault("dct_test_gold", {})
         task.setdefault("run_status", 0)
+        task.setdefault("test_system", self.test_system)
 
         test_patch = task.get("test_patch", "")
         gold_patch = task.get("patch") or task.get("gold_patch", "")
@@ -266,21 +238,15 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         repo_after = None
         repo_gold = None
 
+        build_cmd = self._get_build_command()
+        test_cmd = self._get_test_command()
+
         try:
             repo_after = self.RepoClass(
                 repo=task["repo_name"],
                 base_commit=task["base_commit"],
             )
 
-            # Detect test framework
-            framework = self._detect_test_framework(repo_after)
-            test_command = self._get_test_command(framework)
-
-            # Build environment with necessary dependencies
-            build_cmd = "npm install --legacy-peer-deps --loglevel=error"
-            if framework == 'mocha':
-                build_cmd += ";npm install mocha-junit-reporter --legacy-peer-deps --loglevel=error"
-            
             repo_after.clean()
             repo_after.build_env(build_cmd)
 
@@ -290,7 +256,7 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
                     return
                 
             try:
-                dct_test_after = repo_after.run_test(test_command) or {}
+                dct_test_after = repo_after.run_test(test_cmd) or {}
             except Exception as e:
                 task["exception"] = str(e)
                 task["dct_test_after"] = json.dumps({})
@@ -324,7 +290,7 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
                     return
 
             try:
-                dct_test_gold = repo_gold.run_test(test_command) or {}
+                dct_test_gold = repo_gold.run_test(test_cmd) or {}
             except Exception as e:
                 task["exception"] = str(e)
                 task["dct_test_gold"] = json.dumps({})

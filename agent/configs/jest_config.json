@@ -1,0 +1,145 @@
+{
+  "language": "javascript",
+  "test_framework": "jest",
+  "model": "qwen/qwen3-next-80b-a3b-instruct",
+  "temperature": 0.7,
+  "max_tokens": 32000,
+  "max_iterations": 5,
+  "tools_enabled": true,
+  
+  "prompts": {
+    "system_prompt": "You are an expert in Jest test framework configuration and execution. Your responsibility is to generate bash commands that will make tests pass by configuring the build environment and test execution parameters.\n\nCRITICAL UNDERSTANDING:\n- All test files are CORRECT and should NOT be modified\n- Tests fail due to ENVIRONMENT or CONFIGURATION issues, not code bugs\n- You can ONLY provide bash commands for build_command and test_command\n- The test system marks results as FAIL when tests don't pass, but the test code itself is valid\n\nAVAILABLE TOOLS:\nYou have access to tools for investigating the repository:\n- read_file: Read any file from the repository\n- list_files: Find files matching a pattern\n- run_command: Execute bash commands to inspect environment\n- declare_impossible: If you determine the repository CANNOT be fixed with environment changes alone, use this tool to explain why\n\nUSE TOOLS WHEN:\n- You need to see configuration files not provided in context\n- You need to understand project structure\n- You need to check installed packages or dependencies\n- You determine the issue is unfixable (missing source code, corrupted files, fundamental incompatibilities)\n\nYOUR TASK:\nAnalyze test failures and either:\n1. Provide commands that fix the environment to make tests pass\n2. Use declare_impossible tool if repository cannot be fixed\n\nALLOWED ACTIONS:\n1. Install missing dependencies via npm install in build_command\n2. Set environment variables\n3. Add Jest CLI flags to test_command (--forceExit, --passWithNoTests, --testTimeout, etc)\n4. Configure npm scripts\n5. Ensure commands return exitcode 0\n\nFORBIDDEN ACTIONS:\n- Editing test files or source code\n- Modifying configuration files directly\n- Using sed/awk/vim/nano\n- Any file system modifications\n\nDECLARE IMPOSSIBLE WHEN:\n- Required source files are missing or corrupted\n- Project has fundamental dependency conflicts that cannot be resolved\n- Tests require resources that don't exist in repository\n- Build system is fundamentally broken beyond environment fixes\n\nCOMMON FAILURE PATTERNS AND SOLUTIONS:\n\n1. Missing Dependencies:\n   Problem: Cannot find module 'X'\n   Solution: build_command: npm install X --save-dev --legacy-peer-deps; exit 0\n\n2. Open Handles:\n   Problem: Jest does not exit cleanly\n   Solution: test_command: npm test -- --forceExit || true\n\n3. Timeout Issues:\n   Problem: Test exceeded timeout\n   Solution: test_command: npm test -- --testTimeout=30000 || true\n\n4. No Tests Found:\n   Problem: No test suites found\n   Solution: test_command: npm test -- --passWithNoTests || true\n\n5. Non-zero Return Code:\n   Problem: Command exits with code 1\n   Solution: Append || true or ; exit 0 to command\n\n6. Configuration Errors:\n   Problem: Invalid Jest configuration\n   Solution: Install missing Jest plugins/transformers in build_command\n\nRETURNCODE GUARANTEE:\n- build_command MUST end with ; exit 0\n- test_command MUST end with || true\n- This ensures exitcode 0 even if individual steps fail\n\nRESPONSE FORMAT:\nIf fixable:\nbuild_command: \"complete bash command\"\ntest_command: \"complete bash command\"\n\nIf impossible:\nUse declare_impossible tool with detailed reason\n\nBoth commands must be:\n- Complete and executable\n- Non-interactive\n- Guaranteed to return exitcode 0",
+    
+    "user_prompt_template": "Repository: {repo_name}\nCommit: {base_commit}\n\n=== BUILD EXECUTION ===\nStatus: {build_success}\nReturn Code: Should be 0\nOutput (last 3000 chars):\n{build_output}\n\n=== TEST EXECUTION ===\nTests Passed: {tests_passed}\nTests Failed: {tests_failed}\nTest Code Status: CORRECT (failures are due to environment/config)\nActual Return Code: {actual_returncode}\nRequired Return Code: 0{open_handles_warning}\n\nError Details:\n{errors}\n\nFull Output (last 3000 chars):\n{raw_output}\n\n=== CURRENT COMMANDS ===\nBuild: {current_build_command}\nTest: {current_test_command}\n\n=== REPOSITORY CONFIGURATION ===\n{repo_files}\n\n=== TEST FILES (FOR CONTEXT ONLY - DO NOT MODIFY) ===\n{test_files}\n\nIteration: {iteration}/{max_iterations}\n\nANALYSIS REQUIRED:\n1. Identify missing dependencies from error messages\n2. Detect configuration issues (timeouts, open handles)\n3. Determine required Jest flags\n4. Ensure returncode 0 for both commands\n5. If repository cannot be fixed, use declare_impossible tool\n\nYou can use tools to investigate further:\n- read_file(file_path) - to read any file\n- list_files(pattern, path) - to find files\n- run_command(command) - to inspect environment\n- declare_impossible(reason) - if cannot be fixed\n\nProvide updated commands OR declare impossible.\n\nRESPONSE FORMAT:\nbuild_command: \"your command here\"\ntest_command: \"your command here\"\n\nOR use declare_impossible tool if unfixable.\n\nREMEMBER:\n- Tests are correct, only environment needs fixing\n- Commands must return exitcode 0\n- Use tools to investigate when needed\n- Declare impossible if fundamentally broken"
+  },
+  
+  "error_patterns": {
+    "dependency_missing": [
+      "Cannot find module",
+      "MODULE_NOT_FOUND",
+      "Error: Cannot find module",
+      "ENOENT",
+      "Cannot resolve"
+    ],
+    "syntax_error": [
+      "SyntaxError",
+      "Unexpected token",
+      "Unexpected identifier",
+      "Parsing error"
+    ],
+    "timeout": [
+      "Timeout",
+      "exceeded timeout",
+      "jasmine.DEFAULT_TIMEOUT_INTERVAL",
+      "Exceeded timeout",
+      "Async callback was not invoked"
+    ],
+    "assertion_failed": [
+      "Expected",
+      "toBe",
+      "toEqual",
+      "Received",
+      "AssertionError"
+    ],
+    "configuration": [
+      "jest.config",
+      "Invalid configuration",
+      "Unknown option",
+      "Configuration error",
+      "Validation Error"
+    ],
+    "open_handles": [
+      "Force exiting Jest",
+      "Have you considered using `--detectOpenHandles`",
+      "Jest did not exit one second after",
+      "open handle",
+      "A worker process has failed to exit gracefully"
+    ],
+    "no_tests": [
+      "No tests found",
+      "No test suite found",
+      "Test suite failed to run",
+      "No test files found"
+    ],
+    "transformer": [
+      "transform",
+      "transformer",
+      "babel",
+      "ts-jest",
+      "Requires appropriate loader"
+    ],
+    "impossible_signs": [
+      "ENOTDIR",
+      "source file not found",
+      "Cannot read property",
+      "is not a function",
+      "Invariant Violation"
+    ]
+  },
+  
+  "exit_codes": {
+    "success": 0,
+    "failure": 1,
+    "impossible": 2
+  },
+  
+  "command_solutions": {
+    "dependency_missing": {
+      "description": "Install missing package",
+      "build_pattern": "npm install <package-name> --save-dev --legacy-peer-deps --loglevel=error; exit 0",
+      "test_pattern": "unchanged"
+    },
+    "timeout": {
+      "description": "Increase test timeout",
+      "build_pattern": "unchanged",
+      "test_pattern": "npm test -- --testTimeout=30000 || true"
+    },
+    "open_handles": {
+      "description": "Force exit to close handles",
+      "build_pattern": "unchanged",
+      "test_pattern": "npm test -- --forceExit || true"
+    },
+    "no_tests": {
+      "description": "Pass when no tests found",
+      "build_pattern": "unchanged",
+      "test_pattern": "npm test -- --passWithNoTests || true"
+    },
+    "transformer": {
+      "description": "Install babel or ts-jest transformer",
+      "build_pattern": "npm install @babel/preset-env babel-jest --save-dev --legacy-peer-deps; exit 0",
+      "test_pattern": "unchanged"
+    },
+    "returncode_fix": {
+      "description": "Force exitcode 0",
+      "build_pattern": "append ; exit 0",
+      "test_pattern": "append || true"
+    }
+  },
+  
+  "jest_critical_flags": [
+    "--forceExit",
+    "--passWithNoTests",
+    "--testTimeout=30000",
+    "--maxWorkers=50%"
+  ],
+  
+  "jest_diagnostic_flags": [
+    "--verbose",
+    "--detectOpenHandles",
+    "--bail",
+    "--runInBand"
+  ],
+  
+  "common_dependencies": [
+    "jest",
+    "babel-jest",
+    "@babel/core",
+    "@babel/preset-env",
+    "ts-jest",
+    "@types/jest"
+  ],
+  
+  "build_command_template": "npm ci --legacy-peer-deps --loglevel=error || npm install --legacy-peer-deps --loglevel=error; npm install jest --save-dev --legacy-peer-deps --loglevel=error; exit 0",
+  
+  "test_command_template": "npm test -- --forceExit --passWithNoTests --testTimeout=30000 || true"
+}
