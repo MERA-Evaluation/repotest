@@ -20,7 +20,6 @@ class BashAgent:
         self.model = self.config.get('model', 'qwen/qwen3-next-80b-a3b-instruct')
         
     def _log_step(self, step_type: str, data: Dict[str, Any]):
-        """Логирование шагов выполнения с timestamp"""
         step = {
             'timestamp': datetime.now().isoformat(),
             'step_type': step_type,
@@ -30,7 +29,6 @@ class BashAgent:
         self.trajectory.append(step)
     
     def _read_repo_files(self, repo) -> Dict[str, str]:
-        """Чтение конфигурационных файлов репозитория через стандартные методы repo"""
         file_patterns = [
             "package.json",
             "jest.config.js",
@@ -44,9 +42,7 @@ class BashAgent:
         files_content = {}
         
         try:
-            # Проверяем доступные методы repo
             if hasattr(repo, 'run_command'):
-                # Если есть run_command, используем его
                 for pattern in file_patterns:
                     result = repo.run_command(
                         f"find . -name '{pattern}' -type f -not -path '*/node_modules/*' 2>/dev/null | head -5"
@@ -62,7 +58,6 @@ class BashAgent:
                                     files_content[file_path] = read_result.get('stdout', '')
             
             elif hasattr(repo, 'read_file'):
-                # Если есть метод read_file, используем его
                 for pattern in file_patterns:
                     try:
                         content = repo.read_file(pattern)
@@ -82,7 +77,6 @@ class BashAgent:
         return files_content
     
     def _read_test_files(self, repo, test_results: Dict[str, Any]) -> Dict[str, str]:
-        """Чтение файлов с проваленными тестами"""
         test_files = {}
         
         try:
@@ -116,7 +110,6 @@ class BashAgent:
         return test_files
     
     def _parse_test_results(self, stdout: str, stderr: str, returncode: int) -> Dict[str, Any]:
-        """Парсинг результатов Jest с улучшенной обработкой"""
         results = {
             'success': False,
             'tests_passed': 0,
@@ -168,7 +161,6 @@ class BashAgent:
         return results
     
     def _parse_text_output(self, output: str, results: Dict[str, Any]):
-        """Парсинг текстового вывода Jest"""
         lines = output.split('\n')
         
         for line in lines:
@@ -189,7 +181,6 @@ class BashAgent:
         results['success'] = results['tests_failed'] == 0 and results['tests_passed'] > 0
     
     def _extract_runtime_errors(self, output: str, results: Dict[str, Any]):
-        """Извлечение runtime ошибок из вывода"""
         error_keywords = ['Error:', 'FAIL', 'TypeError:', 'ReferenceError:', 'SyntaxError:']
         lines = output.split('\n')
         
@@ -203,7 +194,6 @@ class BashAgent:
                 break
     
     def _call_llm(self, messages: List[Dict[str, str]]) -> str:
-        """Вызов LLM с обработкой ошибок"""
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -220,7 +210,6 @@ class BashAgent:
                      test_output: Dict[str, Any], iteration: int, 
                      repo_files: Dict[str, str], test_files: Dict[str, str],
                      current_build_command: str, current_test_command: str) -> List[Dict[str, str]]:
-        """Построение промпта для LLM с полным контекстом"""
         system_prompt = self.config['prompts']['system_prompt']
         
         repo_files_str = "\n\n".join([
@@ -274,7 +263,6 @@ class BashAgent:
         return messages
     
     def _build_history_context(self) -> str:
-        """Построение контекста из истории попыток"""
         history = []
         
         for step in self.trajectory[-6:]:
@@ -297,7 +285,6 @@ class BashAgent:
         return "\n\n".join(history) if history else ""
     
     def _extract_commands(self, text: str) -> Dict[str, Optional[str]]:
-        """Извлечение команд сборки и тестирования из ответа LLM"""
         commands = {
             'build_command': None,
             'test_command': None
@@ -340,7 +327,6 @@ class BashAgent:
         return commands
     
     def _clean_command(self, command: str) -> str:
-        """Очистка команды от кавычек и лишних символов"""
         command = command.strip()
         
         for quote in ['"', "'", '`']:
@@ -350,7 +336,6 @@ class BashAgent:
         return command.strip()
     
     def run(self, task: Dict[str, Any], repo) -> Dict[str, Any]:
-        """Основной цикл работы агента"""
         self._log_step('agent_start', {
             'task_id': task['task_id'],
             'instance_id': task['instance_id'],
@@ -474,7 +459,6 @@ class BashAgent:
         )
     
     def _get_error_signature(self, results: Dict[str, Any]) -> str:
-        """Получение сигнатуры ошибок для детекции зацикливания"""
         errors = results.get('errors', [])
         if not errors:
             return f"no_errors_{results.get('tests_failed', 0)}"
@@ -489,7 +473,6 @@ class BashAgent:
         return '|'.join(signature_parts)
     
     def _return_with_success(self, results: Dict[str, Any], iterations: int) -> Dict[str, Any]:
-        """Возврат результата при успехе"""
         final_result = {
             'status': 'success',
             'iterations': iterations,
@@ -505,9 +488,7 @@ class BashAgent:
         final_result['trajectory'] = self.trajectory
         return final_result
     
-    def _return_with_fail(self, reason: str, message: str, 
-                         details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Возврат результата при неудаче"""
+    def _return_with_fail(self, reason: str, message: str, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         final_result = {
             'status': 'failed',
             'reason': reason,
