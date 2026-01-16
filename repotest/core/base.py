@@ -25,8 +25,25 @@ def wait_git_release():
     This affect only first run
     """
     GIT_LOCK_FILE = Path(os.path.join(REPOTEST_MAIN_FOLDER, "git_operations.lock"))
-    with open(GIT_LOCK_FILE, "w") as lock_file:
+    # Ensure the directory exists
+    GIT_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(GIT_LOCK_FILE, "w")
+    try:
         fcntl.flock(lock_file, fcntl.LOCK_EX)  # Exclusive lock
+        return lock_file
+    except Exception as e:
+        lock_file.close()
+        raise e
+
+
+def release_git_lock(lock_file):
+    """
+    Release the git lock file.
+    """
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)  # Release lock
+    finally:
+        lock_file.close()
 
 
 class AbstractRepo(ABC):
@@ -105,34 +122,36 @@ class AbstractRepo(ABC):
         git clone has some limit
         will do git clone with tenacity
         """
-        wait_git_release()
-
-        # ToDo: add checking that repo exist
-        if not os.path.exists(self.original_repo_folder):
-            self._repo = git.Repo.clone_from(self.url, self.original_repo_folder)
-
-        copytree(self.original_repo_folder, self.cache_folder, dirs_exist_ok=True)
-        self._repo = git.Repo(self.cache_folder)
-
-        logger.debug(f"Checking out commit {self.base_commit}")
+        lock_file = wait_git_release()
         try:
-            try:
-                self._repo.git.checkout(self.base_commit)
-            except git.GitCommandError as e:
-                logger.warning(e, exc_info=True)
-                logger.warning(
-                    "We did force checkout for %s base_commit=%s",
-                    self.cache_folder,
-                    self.base_commit,
-                )
-                logger.warning("Please check that this action is not damage pipeline")
-                self._repo.git.checkout(self.base_commit, force=True)
-        except git.GitCommandError as e:
-            logger.critical("Checkout failed %s" % self)
-            logger.critical(e, exc_info=True)
-            raise GitCheckoutFailed(str(self))
+            # ToDo: add checking that repo exist
+            if not os.path.exists(self.original_repo_folder):
+                self._repo = git.Repo.clone_from(self.url, self.original_repo_folder)
 
-        logger.info("Repository is loaded and checked out to the specified commit.")
+            copytree(self.original_repo_folder, self.cache_folder, dirs_exist_ok=True)
+            self._repo = git.Repo(self.cache_folder)
+
+            logger.debug(f"Checking out commit {self.base_commit}")
+            try:
+                try:
+                    self._repo.git.checkout(self.base_commit)
+                except git.GitCommandError as e:
+                    logger.warning(e, exc_info=True)
+                    logger.warning(
+                        "We did force checkout for %s base_commit=%s",
+                        self.cache_folder,
+                        self.base_commit,
+                    )
+                    logger.warning("Please check that this action is not damage pipeline")
+                    self._repo.git.checkout(self.base_commit, force=True)
+            except git.GitCommandError as e:
+                logger.critical("Checkout failed %s" % self)
+                logger.critical(e, exc_info=True)
+                raise GitCheckoutFailed(str(self))
+
+            logger.info("Repository is loaded and checked out to the specified commit.")
+        finally:
+            release_git_lock(lock_file)
 
     def __del__(self):
         """
@@ -230,7 +249,7 @@ class AbstractRepo(ABC):
 
         for ind in range(len(block_list)):
             b = block_list[ind]
-            if b and (b[-1] !='\n'):
+            if b and (b[-1] != '\n'):
                 block_list[ind] += '\n'
         
         return block_list
@@ -256,7 +275,7 @@ class AbstractRepo(ABC):
                 try:
                     self.apply_patch(b)
                     new_block_list.append(b)
-                except:
+                except Exception:
                     bad_index.append(i)
         
         logger.critical(f"drop indexes: {bad_index}")
