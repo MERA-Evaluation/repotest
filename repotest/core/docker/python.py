@@ -12,10 +12,9 @@ from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
 from repotest.parsers.python.pytest_stdout import parse_pytest_stdout
-from repotest.core.docker.types import CacheMode
+from repotest.core.docker.types import CacheMode, OutputBuildEnv, OutputTests, OutputSummary
 
 logger = logging.getLogger("repotest")
-
 
 
 class PythonDockerRepo(AbstractDockerRepo):
@@ -54,7 +53,8 @@ class PythonDockerRepo(AbstractDockerRepo):
             volumes[self.cache_folder] = {"bind": workdir, "mode": "rw"}
 
         if self.cache_mode == "shared":
-            volumes[self._user_pip_cache] = {"bind": self._user_pip_cache, "mode": "rw"}
+            volumes[self._user_pip_cache] = {
+                "bind": self._user_pip_cache, "mode": "rw"}
         elif self.cache_mode == "local":
             volumes[self._local_pip_cache] = {
                 "bind": self._local_pip_cache,
@@ -74,10 +74,11 @@ class PythonDockerRepo(AbstractDockerRepo):
         commit_image=True,
         stop_container=True,
         push_image=False,
-    ) -> Dict[str, object]:
+    ) -> OutputBuildEnv:
         """Build the environment inside the Docker container."""
         self.container_name = self.default_container_name
-        volumes = self._setup_container_volumes(workdir="/run_dir")  # build_dir')
+        volumes = self._setup_container_volumes(
+            workdir="/run_dir")  # build_dir')
 
         logger.info(
             "Starting container",
@@ -108,7 +109,8 @@ class PythonDockerRepo(AbstractDockerRepo):
             self._convert_std_from_bytes_to_str()
 
         if self._FALL_WITH_TIMEOUT_EXCEPTION:
-            raise TimeOutException(f"Command '{command}' timed out after {timeout}s.")
+            raise TimeOutException(
+                f"Command '{command}' timed out after {timeout}s.")
 
         if commit_image:
             self._commit_container_image()
@@ -119,9 +121,9 @@ class PythonDockerRepo(AbstractDockerRepo):
         if stop_container:
             self.stop_container()
 
-        return self._format_results()
+        return self._format_results(is_build=True)
 
-    #ToDo: remove this is not good abstraction
+    # ToDo: remove this is not good abstraction
     def __call__(
         self,
         command_build: str,
@@ -130,6 +132,7 @@ class PythonDockerRepo(AbstractDockerRepo):
         timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
         timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT,
     ) -> Dict[str, object]:
+        # ToDo: delete __call__ everywhere, it was a bad desicion nnot transparent
         """Run build and test commands in sequence."""
         if not self.was_build:
             logger.debug(f"Building image from {self.default_image_name}")
@@ -157,7 +160,7 @@ ulimit -n 65535;
         command: str = "pytest --json-report --json-report-file=report_pytest.json",
         timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
         stop_container: bool = True,
-    ) -> Dict[str, object]:
+    ) -> OutputTests:
         """Run tests inside the Docker container."""
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(
@@ -187,22 +190,62 @@ ulimit -n 65535;
                 with open(fn_json_result, "r") as f:
                     pytest_json = json.load(f)
             except json.JSONDecodeError:
-                logger.warning(f"Failed to parse JSON report at {fn_json_result}")
+                logger.warning(
+                    f"Failed to parse JSON report at {fn_json_result}")
 
         if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
 
-        return self._format_results(pytest_json=pytest_json)
+        return self._format_results(pytest_json=pytest_json, is_build=False)
 
-    def _format_results(self, pytest_json: Optional[Dict] = None) -> Dict[str, object]:
+    def _format_results(self, pytest_json: Optional[Dict] = None, is_build=False) -> OutputBuildEnv | OutputTests:
         """Format results into a consistent dictionary structure."""
-        return {
-            "stdout": self.stdout,
-            "stderr": self.stderr,
-            "std": self.std,
-            "returncode": self.return_code,
-            "parser": parse_pytest_stdout(self.stdout),
-            "report": pytest_json or {},
-            "time": self.evaluation_time,
-            "run_id": self.run_id,
-        }
+        if is_build:
+            OutputClass = OutputBuildEnv
+        else:
+            OutputClass = OutputTests
+
+        parser = parse_pytest_stdout(self.stdout)
+
+        # ToDo: move in abstract class
+        # ToDo: types are simmilar for docker and local implementations
+        if pytest_json and ('summary' in pytest_json):
+            _from = 'report.json'
+            summary_dict = pytest_json['summary']
+        else:
+            _from = 'stdout'
+            summary_dict = parser['summary']
+
+        n_passed = (summary_dict.get('passed', 0) + summary_dict.get('xpassed', 0))
+        n_failed = (summary_dict.get('error', 0) +\
+                    summary_dict.get('failed', 0) +\
+                    summary_dict.get('xfailed', 0)
+                   )
+        n_error = summary_dict.get('error', 0)
+
+        if (n_passed > 0) and (n_failed == 0):
+            status = "Ok"
+        elif (n_passed == 0):
+            status = "Fail"
+        else:
+            status = 'Unknown'
+
+        summary = OutputSummary(status=status,
+                                passed=n_passed,
+                                failed=n_failed,
+                                total=n_passed + n_failed,
+                                error=n_error,
+                                collected=summary_dict.get("collected", -1),
+                                _from=_from
+                                )
+
+        return OutputClass(stdout=self.stdout,
+                           stderr=self.stderr,
+                           std=self.std,
+                           returncode=self.return_code,
+                           parser=parse_pytest_stdout(self.stdout),
+                           report=pytest_json or {},
+                           time=self.evaluation_time,
+                           run_id=self.run_id,
+                           summary=summary
+                           )
