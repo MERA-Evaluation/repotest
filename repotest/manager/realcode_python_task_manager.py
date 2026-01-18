@@ -5,7 +5,7 @@ from repotest.core.docker.python import PythonDockerRepo
 from repotest.core.exceptions import GitException
 from repotest.core.local.python import PythonLocalRepo
 from tqdm import tqdm
-
+from repotest.logger import logger
 
 class TaskManagerRealcode:
     """
@@ -87,7 +87,11 @@ class TaskManagerRealcode:
                 base_commit=task["base_commit"],
                 **({"image_name": task["image_name"]} if self.mode == "docker" else {}),
             )
+            logger.critical("before patch line")
+            if 'patch' in task:
+                repo.apply_patch(task['patch'])
         except Exception as e:
+            logger.critical(e, exc_info=True)
             print(task["repo"], " moved", e)
             if self.raise_exception:
                 raise e
@@ -154,9 +158,10 @@ class TaskManagerRealcode:
             print(task["repo"], " moved", e)
             raise e
         if not repo.was_build:
-            repo.build_env(
+            dct_build = repo.build_env(
                 command=task["build_command"], timeout=task.get("build_timeout", 3000)
             )
+            logger.debug(dct_build['std'])
 
     def build_task_list_single(self, task_list):
         build_task_list = self.get_build_task_list(task_list)
