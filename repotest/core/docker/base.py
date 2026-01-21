@@ -415,12 +415,13 @@ class AbstractDockerRepo(AbstractRepo):
     def save_artifacts(self):
         pass
 
-    def push_image(self, target_tag="latest"):
+    def push_image(self, target_tag="latest", docker_registry_uri=DOCKER_REGISTRY_URI):
+        assert docker_registry_uri, f"docker_registry_uri='{docker_registry_uri}' should't be empty"
         # Tag the image
         try:
             source_image = self.default_image_name
             image = self.docker_client.images.get(source_image)
-            target_repo = os.path.join(DOCKER_REGISTRY_URI, self.instance_id)
+            target_repo = os.path.join(docker_registry_uri, self.instance_id)
             target_image = f"{target_repo}:{target_tag}"
             image.tag(target_repo, tag=target_tag)
             logger.info(f"Successfully tagged {source_image} as {target_image}")
