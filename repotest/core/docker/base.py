@@ -19,7 +19,7 @@ from repotest.constants import (DEFAULT_CACHE_FOLDER,
 from repotest.core.base import AbstractRepo
 from repotest.core.exceptions import (DockerStartContainerFailed,
                                       TimeOutException)
-from repotest.core.docker.types import CacheMode
+from repotest.core.types import CacheMode
 
 from tenacity import retry, stop_after_attempt, wait_chain, wait_fixed
 

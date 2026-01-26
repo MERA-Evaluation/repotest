@@ -24,7 +24,16 @@ class RealcodeTaskCollectorManager:
     raise_exception : bool, optional
         Whether to raise exceptions or suppress them, by default True.
     """
-
+    REQUIRED_COLUMNS = [
+        #"instance_id",
+        "repo",
+        "base_commit",
+        "image_name",
+        #"test_patch",
+        "command_build",
+        "timeout_build",
+        "timeout_test",
+    ]
     build_success_status = {}
 
     def __init__(
@@ -47,9 +56,30 @@ class RealcodeTaskCollectorManager:
         self.n_jobs_build = n_jobs_build
 
         self.gen_columns = gen_columns
+        for column in gen_columns:
+            self.REQUIRED_COLUMNS.append(column)
+        
         self.raise_exception = raise_exception
         self.timeout = timeout
+    
+    def validate_input(self, task_list: List[Dict[str, Union[str, int]]]) -> None:
+        """
+        Validate required fields in task list.
 
+        Parameters
+        ----------
+        task_list : list of dict
+            List of tasks to validate.
+
+        Raises
+        ------
+        AssertionError
+            If required keys are missing from any task.
+        """
+        for ind, task in enumerate(task_list):
+            for column in self.REQUIRED_COLUMNS:
+                assert column in task, f"there is no {column} at ind={ind}"
+    
     @staticmethod
     def extract_test(report_json):
         list_of_tests = report_json.get("report", {}).get("tests", {})
@@ -76,7 +106,38 @@ class RealcodeTaskCollectorManager:
                 res_column_name = f"pass_{key}"
                 res[res_column_name] = int((passed_current & passed) == passed)
         return res
-
+    
+    def calculate_test_time(self, report):
+        """
+        Calculate mapping from pytest nodeid to total test duration.
+        
+        Populates self.dict_test_duration inplace with nodeid -> duration mapping.
+        Duration includes setup + call + teardown phases.
+        
+        Example:
+            {'tests/test_utils.py::test_set_environ[a_new_key-None]': 0.00185,
+            'tests/test_core.py::test_main': 0.12345}
+        """
+        self.dict_test_duration: Dict[str, float] = {}
+        
+        for test in report['tests']:
+            duration = 0
+            
+            for key, value in test.items():  # k, v -> key, value (чуть читабельнее)
+                if isinstance(value, dict) and 'duration' in value:
+                    assert key in ("setup", "call", "teardown"), f"Unknown phase: {key}"
+                    duration += value['duration']  # test[key] -> value (уже есть в руках)
+            
+            node_id = test['nodeid']
+            assert node_id not in self.dict_test_duration, f"Duplicate nodeid: {node_id}"
+            self.dict_test_duration[node_id] = duration
+    
+    def calculate_PASS_TO_PASS_duration(self, pass_to_pass_list):
+        if pass_to_pass_list:
+            return sum([self.dict_test_duration[test_name] for test_name in pass_to_pass_list])
+        else:
+            return 0
+        
     def eval_single(self, task):
         task["status"] = 0
 
@@ -98,6 +159,11 @@ class RealcodeTaskCollectorManager:
         )
 
         task["command_build_and_test"] = command_build_and_test
+        
+        # For OSA docstrgings
+        if 'patch' in task:
+            repo.apply_patch(task['patch'])
+        
         dct_build_and_test = repo.run_test(command_build_and_test, timeout=self.timeout)
         task["dct_build_and_test"] = json.dumps(dct_build_and_test)
 
@@ -114,12 +180,19 @@ class RealcodeTaskCollectorManager:
             % (task["repo"], task["base_commit"], n_good_candidates, len(df_problems))
         )
         df_problems["tests"] = df_problems["tests"].apply(lambda x: json.dumps(list(x)))
+        
+        # Add task durations according to pytest
+        # ToDo: check is init time take a lot?
+        self.calculate_test_time(dct_build_and_test['report'])
+        df_problems['PASS_TO_PASS_duration'] = df_problems['PASS_TO_PASS'].apply(self.calculate_PASS_TO_PASS_duration)
+
         df_problems["PASS_TO_PASS"] = df_problems["PASS_TO_PASS"].apply(
             lambda x: json.dumps(list(x))
         )
         df_problems["FAIL_TO_PASS"] = df_problems["FAIL_TO_PASS"].apply(
             lambda x: json.dumps(list(x))
         )
+
         task["problems"] = json.dumps(list(df_problems.T.to_dict().values()))
 
         task["status"] = 1
@@ -145,6 +218,7 @@ class RealcodeTaskCollectorManager:
             self.collect_task_parallel(task_list)
 
     def inplace_collect(self, task_list):
+        self.validate_input(task_list)
         self.collect_task_list(task_list)
 
 

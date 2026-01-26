@@ -26,7 +26,7 @@ class LiveSWEBenchTaskManager:
 
     Attributes
     ----------
-    REQUIRED_COLUMND : List[str]
+    REQUIRED_COLUMNS : List[str]
         Required keys in each task.
     time_scale_factor : int
         Scaling factor for timeouts based on number of jobs.
@@ -34,7 +34,7 @@ class LiveSWEBenchTaskManager:
         Class used to handle repositories (either Docker or Local).
     """
 
-    REQUIRED_COLUMND = [
+    REQUIRED_COLUMNS = [
         "instance_id",
         "repo",
         "base_commit",
@@ -198,7 +198,7 @@ class LiveSWEBenchTaskManager:
             If required keys are missing from any task.
         """
         for ind, task in enumerate(task_list):
-            for column in self.REQUIRED_COLUMND:
+            for column in self.REQUIRED_COLUMNS:
                 assert column in task, f"there is no {column} at ind={ind}"
 
     def inplace_build_and_eval(

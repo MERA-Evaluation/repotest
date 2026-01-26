@@ -14,7 +14,7 @@ from repotest.constants import (
 )
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
-from repotest.core.docker.types import CacheMode
+from repotest.core.types import CacheMode
 
 logger = logging.getLogger("repotest")
 

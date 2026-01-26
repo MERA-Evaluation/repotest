@@ -4,8 +4,10 @@ from repotest.constants import OPTIMAL_CPU_NUM
 from repotest.core.docker.python import PythonDockerRepo
 from repotest.core.exceptions import GitException
 from repotest.core.local.python import PythonLocalRepo
+from typing import List, Dict, Union
 from tqdm import tqdm
 from repotest.logger import logger
+import json
 
 class TaskManagerRealcode:
     """
@@ -23,7 +25,16 @@ class TaskManagerRealcode:
     raise_exception : bool, optional
         Whether to raise exceptions or suppress them, by default True.
     """
-
+    REQUIRED_COLUMNS = [
+        #"instance_id",
+        "repo",
+        "base_commit",
+        "image_name",
+        #"test_patch",
+        "command_build",
+        "timeout_build",
+        "timeout_test",
+    ]
     build_success_status = {}
 
     def __init__(
@@ -33,6 +44,7 @@ class TaskManagerRealcode:
         gen_columns=["gt", "pass", "return_empty_str", "gen"],
         raise_exception=True,
         n_jobs_build=OPTIMAL_CPU_NUM,
+        column_command_test = "command_test"
     ):
         assert mode in ("docker", "local")
         if mode == "docker":
@@ -46,6 +58,30 @@ class TaskManagerRealcode:
 
         self.gen_columns = gen_columns
         self.raise_exception = raise_exception
+
+        self.column_command_test = column_command_test
+
+        for column in gen_columns:
+            self.REQUIRED_COLUMNS.append(column)
+        self.REQUIRED_COLUMNS.append(column_command_test)
+    
+    def validate_input(self, task_list: List[Dict[str, Union[str, int]]]) -> None:
+        """
+        Validate required fields in task list.
+
+        Parameters
+        ----------
+        task_list : list of dict
+            List of tasks to validate.
+
+        Raises
+        ------
+        AssertionError
+            If required keys are missing from any task.
+        """
+        for ind, task in enumerate(task_list):
+            for column in self.REQUIRED_COLUMNS:
+                assert column in task, f"there is no {column} at ind={ind}"
 
     @staticmethod
     def extract_test(report_json):
@@ -87,35 +123,44 @@ class TaskManagerRealcode:
                 base_commit=task["base_commit"],
                 **({"image_name": task["image_name"]} if self.mode == "docker" else {}),
             )
-            logger.critical("before patch line")
-            if 'patch' in task:
-                repo.apply_patch(task['patch'])
         except Exception as e:
             logger.critical(e, exc_info=True)
             print(task["repo"], " moved", e)
             if self.raise_exception:
                 raise e
+        
+        # The way hot we modify repo 
+        repo.clean()
+        if 'patch' in task:
+            repo.apply_patch(task['patch'])
 
         try:
-            if (not repo.was_build) or ("passed_dict" in task):
+            if (not repo.was_build):
                 return
 
-            repo.clean()
+            # repo.clean()
             if self.mode == "docker":
                 repo.image_name = repo.default_image_name
 
-            task["test_dry_run"] = repo.run_test(task["test_command"], timeout=300)
-
+            task["test_dry_run"] = repo.run_test(task[self.column_command_test], 
+                                                 timeout=task["timeout_test"]
+                                                 )
+            
             for gen_column in self.gen_columns:
                 repo.clean()
+                if 'patch' in task:
+                    repo.apply_patch(task['patch'])
+                
                 repo.change_file_realcode(
                     fn_relative=task["fn"],
                     left_context=task["left_context"],
                     gt=task[gen_column],
                     right_context=task["right_context"],
                 )
-                task["test_" + gen_column] = repo.run_test(
-                    task["test_command"], timeout=300
+                column = "test_" + gen_column
+                task[column] = repo.run_test(
+                    task[self.column_command_test], 
+                    timeout = task["timeout_test"]
                 )
 
             passed_dict = self.get_passed_dict(task)
@@ -132,7 +177,12 @@ class TaskManagerRealcode:
                 for key in self.gen_columns:
                     if (key in task) or (key == "gen"):
                         task[f"pass_{key}"] = 0
-
+            
+            for name_upfix in ['dry_run'] + self.gen_columns:
+                name = f"test_{name_upfix}"
+                if name in task:
+                    task[name] = json.dumps(task[name])
+ 
     @staticmethod
     def get_build_task_list(task_list):
         build_task_list = []
@@ -159,7 +209,8 @@ class TaskManagerRealcode:
             raise e
         if not repo.was_build:
             dct_build = repo.build_env(
-                command=task["build_command"], timeout=task.get("build_timeout", 3000)
+                command=task["command_build"], 
+                timeout=task["timeout_build"]
             )
             logger.debug(dct_build['std'])
 
@@ -218,6 +269,7 @@ class TaskManagerRealcode:
             self.eval_task_parallel(task_list)
 
     def inplace_build_and_eval(self, task_list):
+        self.validate_input(task_list)
         print("Building envs ...")
         self.build_task_list(task_list)
         print("Running tests ...")

@@ -5,7 +5,7 @@ from docker.errors import APIError, ImageNotFound
 from repotest.constants import DEFAULT_BUILD_TIMEOUT_INT, DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
-from repotest.core.docker.types import CacheMode
+from repotest.core.types import CacheMode
 
 logger = logging.getLogger("repotest")
 

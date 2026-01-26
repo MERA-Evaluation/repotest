@@ -61,6 +61,21 @@ class LineIndexMap:
 
         return result[::-1]
 
+def fn_to_docker_fn(fn, add_run_dir_prefix = True):
+    # ToDo: fix this madnes. The problem that inside pytest .coverage file, fn = "/run_dir/some_file.py"
+    # really there is ~/.cache/repotest/runs/sf824jsdf/some_file.py
+    # This bug cause when attach volume to /run_dir/ instead of using same folder
+    # This increase spead at realcode/liveswebench tasks, but cause this error
+    _, fn_relative = fn[
+        len(os.path.join(REPOTEST_MAIN_FOLDER, "runs/")) :
+    ].split("/", 1)
+
+    if add_run_dir_prefix:
+        fn = os.path.join("/run_dir/", fn_relative)
+    else:
+        fn = fn_relative
+
+    return fn
 
 class ContextParser:
     """
@@ -90,7 +105,8 @@ class ContextParser:
         self.dfs(tree)
 
     def parse_node(
-        self, node: Union[ast.FunctionDef, ast.ClassDef], intent_type: str
+        self, node: Union[ast.FunctionDef, ast.ClassDef], intent_type: str,
+        path_ast_full: str
     ) -> Dict[str, Any]:
         """
         Parse a node into a structured dictionary.
@@ -131,6 +147,14 @@ class ContextParser:
             right_context = "\n".join(self.lines[r:]) + "\n"
             doc = None
 
+        source_unique_id = (
+                            f"{fn_to_docker_fn(self.fn, add_run_dir_prefix=False)}:"
+                            f"{path_ast_full}"
+                           )
+        source_lines_unique_id = (f"{fn_to_docker_fn(self.fn, add_run_dir_prefix=False)}:"
+                                  f"{path_ast_full}"
+                                  f"#L{l}-L{r}"
+                                 )
         return {
             "intent": f"{node.name}[{intent_type}]",
             "intent_type": intent_type,
@@ -143,11 +167,12 @@ class ContextParser:
             "doc": doc,
             "_node": node,
             "fn": self.fn,
-            "source": f"{self.fn}:{node.name}[{intent_type}]",
+            "source": source_unique_id,
+            "source_lines": source_lines_unique_id,
             "tests": set(),
         }
 
-    def dfs(self, ptr: ast.AST) -> None:
+    def dfs(self, ptr: ast.AST, path_ast_full="") -> None:
         """
         Recursively traverse the AST to find function/class definitions.
 
@@ -157,13 +182,13 @@ class ContextParser:
             The root AST node to begin traversal from.
         """
         if isinstance(ptr, ast.FunctionDef):
-            self.problems.append(self.parse_node(ptr, "function"))
+            self.problems.append(self.parse_node(ptr, "function", path_ast_full=path_ast_full))
         elif isinstance(ptr, ast.ClassDef):
-            self.problems.append(self.parse_node(ptr, "class"))
+            self.problems.append(self.parse_node(ptr, "class", path_ast_full=path_ast_full))
 
         for child in getattr(ptr, "body", []):
             if isinstance(child, (ast.FunctionDef, ast.ClassDef)):
-                self.dfs(child)
+                self.dfs(child, path_ast_full = f'{path_ast_full}::{child.name}')
 
     def __len__(self) -> int:
         return len(self.problems)
@@ -265,34 +290,18 @@ class TaskCollector:
         for fn in self.python_file_list:
             file_index = ContextParser(fn).index_dict()
             for ptr in file_index.values():
-                ptr["_fn_inside_repo"] = ptr["fn"]
-                ptr["fn"] = self.fn_to_docker_fn(ptr["fn"])
+                ptr["_fn_real"] = ptr["fn"]
+                ptr["fn"] = fn_to_docker_fn(ptr["fn"])
 
             if file_index:
-                self.index[self.fn_to_docker_fn(fn)] = LineIndexMap(file_index)
-
-    def fn_to_docker_fn(self, fn):
-        # ToDo: fix this madnes. The problem that inside pytest .coverage file, fn = "/run_dir/some_file.py"
-        # really there is ~/.cache/repotest/runs/sf824jsdf/some_file.py
-        # This bug cause when attach volume to /run_dir/ instead of using same folder
-        # This increase spead at realcode/liveswebench tasks, but cause this error
-        if self.mode == "docker":
-            _, fn_relative = fn[
-                len(os.path.join(REPOTEST_MAIN_FOLDER, "runs/")) :
-            ].split("/", 1)
-            fn = os.path.join("/run_dir/", fn_relative)
-
-        if fn.startswith("/home/paadamenko/"):
-            fn = "/data/adam/" + fn[len("/home/paadamenko/") :]
-
-        return fn
+                self.index[fn_to_docker_fn(fn)] = LineIndexMap(file_index)
 
     def run(self) -> None:
         """
         Enrich indexed problems with test coverage information.
         """
         for _fn in self.python_file_list:
-            fn = self.fn_to_docker_fn(_fn)
+            fn = fn_to_docker_fn(_fn)
             dict_lineno_test_list = self.cov_data.contexts_by_lineno(fn)
             if dict_lineno_test_list:
                 for line_num, test_list in dict_lineno_test_list.items():
@@ -306,7 +315,7 @@ class TaskCollector:
 
     def compute_coverage(self, row):
         # ToDo: think about how to manage this better
-        fn_inside_repo = self.fn_to_docker_fn(row["_fn_inside_repo"])
+        fn_inside_repo = fn_to_docker_fn(row["_fn_real"])
         lines_covered = set(self.cov_data.lines(fn_inside_repo) or [])
         total_lines = set(range(row["l"], row["r"] + 1))
         if not total_lines:

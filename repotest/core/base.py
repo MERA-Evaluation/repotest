@@ -12,7 +12,7 @@ from shutil import copytree, rmtree
 
 import git
 from repotest.constants import DEFAULT_CACHE_FOLDER, REPOTEST_MAIN_FOLDER
-from repotest.core.exceptions import GitCheckoutFailed, GitCloneFailed
+from repotest.core.exceptions import GitCheckoutFailed, GitCloneFailed, GitPatchFailed
 from repotest.logger import disable_all_logs
 
 logger = logging.getLogger("repotest")
@@ -204,8 +204,9 @@ class AbstractRepo(ABC):
             return
 
         if not git_patch.startswith("diff --git"):
-            logger.warning("Git format is frong, not contain diff --git for %s", self)
-            return
+            msg = "Git format is frong, not contain diff --git for %s", self
+            logger.warning(msg)
+            return GitPatchFailed(msg)
 
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
@@ -216,10 +217,10 @@ class AbstractRepo(ABC):
                 logger.debug("Applying patch to repository")
                 self.apply_patch_fn(patch_file_path)
         except Exception as e:
-            logger.critical("critical faile %s", self)
+            logger.critical("Critical fail %s", self)
             logger.critical("git_patch %s", git_patch)
             logger.critical(e, exc_info=True)
-            raise e
+            raise GitPatchFailed("patch not working") from e
 
     @classmethod
     def __get_block_list(cls, patch: str) -> str:

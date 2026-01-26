@@ -11,7 +11,7 @@ from repotest.parsers.java.maven_stdout import analyze_maven_stdout
 from repotest.parsers.java.surefire_report import (find_test_reports,
                                                    group_test_cases_by_status,
                                                    parse_xml_test_report)
-from repotest.core.docker.types import CacheMode
+from repotest.core.types import CacheMode
 
 logger = logging.getLogger("repotest")
 

@@ -34,6 +34,11 @@ class GitCloneFailed(GitException):
     def __init__(self, message="Git clone failed"):
         super().__init__(message)
 
+class GitPatchFailed(GitException):
+    """Patch repo failed"""
+
+    def __init__(self, message="Git patch failed"):
+        super().__init__(message)
 
 class DockerException(CoreException):
     """General docker exception"""

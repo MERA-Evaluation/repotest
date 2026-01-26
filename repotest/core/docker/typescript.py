@@ -10,7 +10,7 @@ from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException
 from repotest.parsers.python.javascript_stout import parse_test_stdout
-from repotest.core.docker.types import CacheMode
+from repotest.core.types import CacheMode
 import xmltodict
 
 logger = logging.getLogger("repotest")
