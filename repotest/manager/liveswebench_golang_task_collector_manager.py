@@ -1,4 +1,5 @@
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Union, Tuple
 
@@ -51,6 +52,40 @@ class LiveSWEBenchGoTaskCollectorManager:
             enable_stdout_logs()
 
     @staticmethod
+    def parse_test_names_from_stdout(stdout: str) -> Tuple[set, set]:
+        """
+        Parse test names from Go test stdout output using regex.
+        
+        Go test output patterns:
+        - PASS: TestName
+        - FAIL: TestName
+        - --- PASS: TestName (0.00s)
+        - --- FAIL: TestName (0.00s)
+        - RUN   TestName
+        """
+        if not stdout:
+            return set(), set()
+        
+        passed = set()
+        failed = set()
+        
+        # Pattern for PASS/FAIL lines
+        pass_pattern = r'(?:^|\n)(?:---\s+)?PASS:\s+(\S+)'
+        fail_pattern = r'(?:^|\n)(?:---\s+)?FAIL:\s+(\S+)'
+        
+        # Find all passed tests
+        for match in re.finditer(pass_pattern, stdout, re.MULTILINE):
+            test_name = match.group(1)
+            passed.add(test_name)
+        
+        # Find all failed tests
+        for match in re.finditer(fail_pattern, stdout, re.MULTILINE):
+            test_name = match.group(1)
+            failed.add(test_name)
+        
+        return passed, failed
+
+    @staticmethod
     def extract_all_test_names(test_result: dict) -> Tuple[set, set]:
         """Extract all passed and failed test names from test results"""
         if not test_result:
@@ -86,16 +121,11 @@ class LiveSWEBenchGoTaskCollectorManager:
         
         extract_all_tests(tests)
         
-        summary = report.get("summary", {})
-        total_passed = summary.get("passed", 0)
-        total_failed = summary.get("failed", 0)
-        
-        if len(passed) == 0 and total_passed > 0:
-            for i in range(total_passed):
-                passed.add(f"test_passed_{i}")
-        if len(failed) == 0 and total_failed > 0:
-            for i in range(total_failed):
-                failed.add(f"test_failed_{i}")
+        # If no test names found in structured report, try parsing stdout
+        if len(passed) == 0 and len(failed) == 0:
+            stdout = test_result.get("stdout", "") or test_result.get("output", "")
+            if stdout:
+                passed, failed = LiveSWEBenchGoTaskCollectorManager.parse_test_names_from_stdout(stdout)
         
         return passed, failed
 

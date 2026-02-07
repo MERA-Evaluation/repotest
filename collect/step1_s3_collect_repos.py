@@ -367,6 +367,72 @@ def collect_js_mocha_repos_from_s3(
     )
 
 
+def collect_ts_jest_repos_from_s3(
+    output_file: str,
+    s3_bucket: str = "test",
+    s3_prefix: str = "test/test",
+    aws_profile: Optional[str] = "maintainer",
+    github_token: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    checkpoint_file: Optional[str] = None,
+    max_retries: int = 3,
+    fetch_detailed_info: bool = True,
+    detailed_info_delay: float = 1.0
+):
+    """Convenience function for TypeScript Jest repos."""
+    from collect.lang.s3_typescript_jest import TypeScriptJestFilter
+    language_filter = TypeScriptJestFilter()
+    
+    collect_repos_from_s3(
+        output_file=output_file,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
+        language_filter=language_filter,
+        github_token=github_token,
+        aws_profile=aws_profile,
+        start_date=start_date,
+        end_date=end_date,
+        checkpoint_file=checkpoint_file,
+        max_retries=max_retries,
+        fetch_detailed_info=fetch_detailed_info,
+        detailed_info_delay=detailed_info_delay
+    )
+
+
+def collect_ts_mocha_repos_from_s3(
+    output_file: str,
+    s3_bucket: str = "test",
+    s3_prefix: str = "test/test",
+    aws_profile: Optional[str] = "maintainer",
+    github_token: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    checkpoint_file: Optional[str] = None,
+    max_retries: int = 3,
+    fetch_detailed_info: bool = True,
+    detailed_info_delay: float = 1.0
+):
+    """Convenience function for TypeScript Mocha repos."""
+    from collect.lang.s3_typescript_mocha import TypeScriptMochaFilter
+    language_filter = TypeScriptMochaFilter()
+    
+    collect_repos_from_s3(
+        output_file=output_file,
+        s3_bucket=s3_bucket,
+        s3_prefix=s3_prefix,
+        language_filter=language_filter,
+        github_token=github_token,
+        aws_profile=aws_profile,
+        start_date=start_date,
+        end_date=end_date,
+        checkpoint_file=checkpoint_file,
+        max_retries=max_retries,
+        fetch_detailed_info=fetch_detailed_info,
+        detailed_info_delay=detailed_info_delay
+    )
+
+
 def collect_golang_repos_from_s3(
     output_file: str,
     s3_bucket: str = "test",
@@ -404,6 +470,8 @@ if __name__ == "__main__":
     fire.Fire({
         'jest': collect_js_jest_repos_from_s3,
         'mocha': collect_js_mocha_repos_from_s3,
+        'ts-jest': collect_ts_jest_repos_from_s3,
+        'ts-mocha': collect_ts_mocha_repos_from_s3,
         'golang': collect_golang_repos_from_s3,
         'custom': collect_repos_from_s3
     })

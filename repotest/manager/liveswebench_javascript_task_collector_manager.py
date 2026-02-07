@@ -1,4 +1,5 @@
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Union, Tuple
 
@@ -56,7 +57,114 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
             enable_stdout_logs()
 
     @staticmethod
-    def extract_all_test_names(test_result: dict) -> Tuple[set, set]:
+    def parse_jest_stdout(stdout: str) -> Tuple[set, set]:
+        """
+        Parse test names from Jest stdout output.
+        
+        Jest patterns:
+        - PASS  path/to/test.js
+        - FAIL  path/to/test.js
+        - ✓ test name (time)
+        - ✕ test name (time)
+        """
+        if not stdout:
+            return set(), set()
+        
+        passed = set()
+        failed = set()
+        
+        # Patterns for individual test results
+        pass_patterns = [
+            r'^\s*✓\s+(.+?)(?:\s+\(\d+\s*ms\))?$',
+            r'^\s*✔\s+(.+?)(?:\s+\(\d+\s*ms\))?$',
+            r'^\s*PASS\s+(.+\.(?:test|spec)\.(?:js|jsx|ts|tsx))$',
+        ]
+        
+        fail_patterns = [
+            r'^\s*✕\s+(.+?)(?:\s+\(\d+\s*ms\))?$',
+            r'^\s*✖\s+(.+?)(?:\s+\(\d+\s*ms\))?$',
+            r'^\s*FAIL\s+(.+\.(?:test|spec)\.(?:js|jsx|ts|tsx))$',
+        ]
+        
+        lines = stdout.split('\n')
+        for line in lines:
+            # Check for passed tests
+            for pattern in pass_patterns:
+                match = re.match(pattern, line, re.MULTILINE)
+                if match:
+                    test_name = match.group(1).strip()
+                    if test_name:
+                        passed.add(test_name)
+                    break
+            
+            # Check for failed tests
+            for pattern in fail_patterns:
+                match = re.match(pattern, line, re.MULTILINE)
+                if match:
+                    test_name = match.group(1).strip()
+                    if test_name:
+                        failed.add(test_name)
+                    break
+        
+        return passed, failed
+
+    @staticmethod
+    def parse_mocha_stdout(stdout: str) -> Tuple[set, set]:
+        """
+        Parse test names from Mocha stdout output.
+        
+        Mocha patterns:
+        - ✓ test name
+        - ✔ test name
+        - 1) test name
+        - ✗ test name
+        """
+        if not stdout:
+            return set(), set()
+        
+        passed = set()
+        failed = set()
+        
+        # Patterns for Mocha test results
+        pass_pattern = r'^\s*[✓✔]\s+(.+?)(?:\s+\(\d+ms\))?$'
+        fail_patterns = [
+            r'^\s*\d+\)\s+(.+)$',  # numbered failures
+            r'^\s*[✗✕✖]\s+(.+)$',  # failed with X mark
+        ]
+        
+        lines = stdout.split('\n')
+        for line in lines:
+            # Check for passed tests
+            match = re.match(pass_pattern, line)
+            if match:
+                test_name = match.group(1).strip()
+                if test_name:
+                    passed.add(test_name)
+                continue
+            
+            # Check for failed tests
+            for pattern in fail_patterns:
+                match = re.match(pattern, line)
+                if match:
+                    test_name = match.group(1).strip()
+                    if test_name:
+                        failed.add(test_name)
+                    break
+        
+        return passed, failed
+
+    @staticmethod
+    def parse_test_names_from_stdout(stdout: str, test_system: str = "jest") -> Tuple[set, set]:
+        """
+        Parse test names from stdout based on test system.
+        """
+        if test_system == "mocha":
+            return LiveSWEBenchJavaScriptTaskCollectorManager.parse_mocha_stdout(stdout)
+        else:  # jest
+            return LiveSWEBenchJavaScriptTaskCollectorManager.parse_jest_stdout(stdout)
+
+    @staticmethod
+    def extract_all_test_names(test_result: dict, test_system: str = "jest") -> Tuple[set, set]:
         """Extract all passed and failed test names from Jest/Mocha test results"""
         if not test_result:
             return set(), set()
@@ -91,21 +199,18 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         
         extract_all_tests(tests)
         
-        summary = report.get("summary", {})
-        total_passed = summary.get("passed", 0)
-        total_failed = summary.get("failed", 0)
-        
-        if len(passed) == 0 and total_passed > 0:
-            for i in range(total_passed):
-                passed.add(f"test_passed_{i}")
-        if len(failed) == 0 and total_failed > 0:
-            for i in range(total_failed):
-                failed.add(f"test_failed_{i}")
+        # If no test names found in structured report, try parsing stdout
+        if len(passed) == 0 and len(failed) == 0:
+            stdout = test_result.get("stdout", "") or test_result.get("output", "")
+            if stdout:
+                passed, failed = LiveSWEBenchJavaScriptTaskCollectorManager.parse_test_names_from_stdout(
+                    stdout, test_system
+                )
         
         return passed, failed
 
     @staticmethod
-    def get_task_correctness(dct_test_after: dict, dct_test_gold: dict) -> dict:
+    def get_task_correctness(dct_test_after: dict, dct_test_gold: dict, test_system: str = "jest") -> dict:
         """
         Compute correctness metrics by comparing test results.
         
@@ -127,8 +232,12 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         total_after = summary_after.get("total", 0)
         total_gold = summary_gold.get("total", 0)
         
-        success_after, failed_names_after = LiveSWEBenchJavaScriptTaskCollectorManager.extract_all_test_names(dct_test_after)
-        success_gold, failed_names_gold = LiveSWEBenchJavaScriptTaskCollectorManager.extract_all_test_names(dct_test_gold)
+        success_after, failed_names_after = LiveSWEBenchJavaScriptTaskCollectorManager.extract_all_test_names(
+            dct_test_after, test_system
+        )
+        success_gold, failed_names_gold = LiveSWEBenchJavaScriptTaskCollectorManager.extract_all_test_names(
+            dct_test_gold, test_system
+        )
         
         new_passing = success_gold - success_after
         
@@ -217,6 +326,29 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
                         "\""
                     )
 
+    def _has_valid_test_results(self, test_result: dict) -> bool:
+        """
+        Check if test result contains valid test data, even if returncode != 0.
+        
+        Returns True if:
+        - There's a summary with test counts
+        - OR there are test names extracted from stdout
+        """
+        if not test_result:
+            return False
+        
+        # Check if we have summary data
+        summary = test_result.get("report", {}).get("summary", {})
+        if summary.get("total", 0) > 0:
+            return True
+        
+        # Check if we can extract test names from stdout
+        passed, failed = self.extract_all_test_names(test_result, self.test_system)
+        if len(passed) > 0 or len(failed) > 0:
+            return True
+        
+        return False
+
     def inplace_build_and_eval_single(self, task: Dict[str, Union[str, int]]) -> None:
         """
         Build environment and evaluate a single task.
@@ -225,12 +357,13 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         1. Create repo, apply test_patch, run tests -> dct_test_after
         2. Create fresh repo, apply test_patch + gold patch, run tests -> dct_test_gold
         3. Compute correctness
+        
+        Note: Even if returncode != 0, we still process results if tests were run.
         """
         task.setdefault("exception", "")
         task.setdefault("dct_test_after", {})
         task.setdefault("dct_test_gold", {})
         task.setdefault("run_status", 0)
-        task.setdefault("test_system", self.test_system)
 
         test_patch = task.get("test_patch", "")
         gold_patch = task.get("patch") or task.get("gold_patch", "")
@@ -242,6 +375,7 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
         test_cmd = self._get_test_command()
 
         try:
+            # === Run tests AFTER applying test_patch ===
             repo_after = self.RepoClass(
                 repo=task["repo_name"],
                 base_commit=task["base_commit"],
@@ -258,11 +392,23 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
             try:
                 dct_test_after = repo_after.run_test(test_cmd) or {}
             except Exception as e:
-                task["exception"] = str(e)
-                task["dct_test_after"] = json.dumps({})
+                # Even if exception occurred, check if we got partial results
+                dct_test_after = getattr(e, 'test_result', None) or {}
+                
+                # If we have valid test results despite the exception, continue
+                if not self._has_valid_test_results(dct_test_after):
+                    # No valid results, abort
+                    task["exception"] = str(e)
+                    task["dct_test_after"] = json.dumps({})
+                    task["run_status"] = 0
+                    if self.raise_exception:
+                        raise
+                    return
+
+            # Check if we have valid test results
+            if not self._has_valid_test_results(dct_test_after):
+                task["dct_test_after"] = json.dumps(dct_test_after)
                 task["run_status"] = 0
-                if self.raise_exception:
-                    raise
                 return
 
             task["dct_test_after"] = json.dumps(dct_test_after)
@@ -271,6 +417,7 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
             self._stop_repo_safe(repo_after)
             repo_after = None
 
+            # === Run tests GOLD (with test_patch + gold_patch) ===
             repo_gold = self.RepoClass(
                 repo=task["repo_name"],
                 base_commit=task["base_commit"],
@@ -292,19 +439,33 @@ class LiveSWEBenchJavaScriptTaskCollectorManager:
             try:
                 dct_test_gold = repo_gold.run_test(test_cmd) or {}
             except Exception as e:
-                task["exception"] = str(e)
-                task["dct_test_gold"] = json.dumps({})
+                # Even if exception occurred, check if we got partial results
+                dct_test_gold = getattr(e, 'test_result', None) or {}
+                
+                # If we have valid test results despite the exception, continue
+                if not self._has_valid_test_results(dct_test_gold):
+                    # No valid results, abort
+                    task["exception"] = str(e)
+                    task["dct_test_gold"] = json.dumps({})
+                    task["run_status"] = 0
+                    if self.raise_exception:
+                        raise
+                    return
+
+            # Check if we have valid test results
+            if not self._has_valid_test_results(dct_test_gold):
+                task["dct_test_gold"] = json.dumps(dct_test_gold)
                 task["run_status"] = 0
-                if self.raise_exception:
-                    raise
                 return
 
             task["dct_test_gold"] = json.dumps(dct_test_gold)
             task["test_gold_summary"] = dct_test_gold.get("report", {}).get("summary", {})
 
+            # === Compute correctness ===
             correctness = self.get_task_correctness(
                 dct_test_after=dct_test_after,
                 dct_test_gold=dct_test_gold,
+                test_system=self.test_system,
             )
             for k, v in correctness.items():
                 task[k] = v

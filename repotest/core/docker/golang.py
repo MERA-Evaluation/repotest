@@ -19,7 +19,7 @@ def parse_go_test_report(report_path: str) -> Dict[str, object]:
     try:
         with open(report_path, "r") as f:
             content = f.read()
-            
+
             if content.strip().startswith("{") or content.strip().startswith("["):
                 return _parse_go_json(content)
             
