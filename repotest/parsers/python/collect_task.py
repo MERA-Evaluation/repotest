@@ -167,7 +167,7 @@ class ContextParser:
             "doc": doc,
             "_node": node,
             "fn": self.fn,
-            "source": source_unique_id,
+            "source": source_unique_id, # Add source with index like foo.py::Foo.foo[0], foo.py::Foo.foo[1] etc
             "source_lines": source_lines_unique_id,
             "tests": set(),
         }

@@ -4,6 +4,7 @@ import os
 from abc import abstractmethod
 from functools import cached_property
 from typing import List
+import tempfile
 
 import docker
 from docker.errors import APIError, ImageNotFound, NotFound
@@ -18,7 +19,7 @@ from repotest.constants import (DEFAULT_CACHE_FOLDER,
                                 DOCKER_REGISTRY_URI)
 from repotest.core.base import AbstractRepo
 from repotest.core.exceptions import (DockerStartContainerFailed,
-                                      TimeOutException)
+                                      TimeOutException, GitPatchFailed)
 from repotest.core.types import CacheMode
 
 from tenacity import retry, stop_after_attempt, wait_chain, wait_fixed
@@ -523,3 +524,61 @@ class AbstractDockerRepo(AbstractRepo):
         except Exception as e:
             logger.error(f"Failed to clean up with Alpine container: {e}")
             return False
+
+    def bash(self, command):
+        #ToDo: refactor this should be main entry point not in other way
+        return self.run_test(command)['std']
+    
+    def apply_patch_alpine_container(self, git_patch):
+        """
+        Apply a patch string to the repository using Alpine container.
+
+        Parameters
+        ----------
+        git_patch : str
+            Git patch content as a string.
+        """
+        if (not git_patch) or (git_patch.strip() == ""):
+            logger.warning("Empty git patch for %s", self)
+            return
+
+        if not git_patch.startswith("diff --git"):
+            msg = f"Git format is wrong, does not contain diff --git for {self}"
+            logger.warning(msg)
+            raise GitPatchFailed(msg)
+
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                patch_file_path = os.path.join(temp_dir, "patch.diff")
+                logger.debug(f"Saving Git patch to {patch_file_path}")
+                
+                with open(patch_file_path, "w") as patch_file:
+                    patch_file.write(git_patch)
+                
+                volumes = {
+                    temp_dir: {"bind": "/patches", "mode": "ro"},
+                    self.cache_folder: {"bind": "/run_dir", "mode": "rw"}
+                }
+                
+                logger.debug("Applying patch with Alpine container")
+                
+                # Override entrypoint to use sh, then run git apply
+                # Work with the git entrypoint - simpler!
+                result = self.docker_client.containers.run(
+                    image="alpine/git:latest",
+                    command="apply --verbose /patches/patch.diff",
+                    working_dir="/run_dir",
+                    volumes=volumes,
+                    remove=True,
+                    mem_limit=self.MEM_LIMIT,
+                )
+
+                logger.info("Patch applied successfully")
+                logger.debug(f"Git apply output: {result.decode('utf-8')}")
+                
+        except Exception as e:
+            logger.critical("Critical fail %s", self)
+            logger.critical("git_patch %s", git_patch)
+            logger.critical(e, exc_info=True)
+            raise GitPatchFailed("patch not working") from e
+

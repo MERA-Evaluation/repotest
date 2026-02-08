@@ -56,8 +56,8 @@ class RealcodeTaskCollectorManager:
         self.n_jobs_build = n_jobs_build
 
         self.gen_columns = gen_columns
-        for column in gen_columns:
-            self.REQUIRED_COLUMNS.append(column)
+        # for column in gen_columns:
+        #    self.REQUIRED_COLUMNS.append(column)
         
         self.raise_exception = raise_exception
         self.timeout = timeout

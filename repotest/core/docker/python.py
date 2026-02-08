@@ -10,7 +10,7 @@ from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
                                 DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT,
                                 DOCKER_PYTHON_DEFAULT_IMAGE)
 from repotest.core.docker.base import AbstractDockerRepo
-from repotest.core.exceptions import TimeOutException
+from repotest.core.exceptions import TimeOutException, GitPatchFailed
 from repotest.parsers.python.pytest_stdout import parse_pytest_stdout
 from repotest.core.types import CacheMode, OutputBuildEnv, OutputTests, OutputSummary
 
@@ -28,6 +28,7 @@ class PythonDockerRepo(AbstractDockerRepo):
         default_url: str = "http://github.com",
         image_name: str = DOCKER_PYTHON_DEFAULT_IMAGE,
         cache_mode: CacheMode = "volume",
+        working_mode = 'repo'
     ) -> None:
         super().__init__(
             repo=repo,
@@ -37,6 +38,15 @@ class PythonDockerRepo(AbstractDockerRepo):
             image_name=image_name,
             cache_mode=cache_mode,
         )
+        self.working_mode = working_mode
+        if self.working_mode == 'docker':
+            self.cp_testbed_rundir()
+            self.apply_patch = self.apply_patch_alpine_container
+        elif self.working_mode == 'repo':
+            pass
+        else:
+            raise ValueError(f"Unknown working_mode={working_mode}")
+
 
     @cached_property
     def _user_pip_cache(self) -> str:
@@ -99,6 +109,11 @@ class PythonDockerRepo(AbstractDockerRepo):
         try:
             self.evaluation_time = time.time()
             self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
+            
+            # Copy run_dir to testbed after build completes
+            logger.info("Copying /run_dir to /testbed")
+            copy_command = "cp -r /run_dir /testbed"
+            self.timeout_exec_run(f"bash -c '{copy_command}'", timeout=timeout)
         except TimeOutException:
             logger.error("Timeout exception during build_env")
             self.return_code = 2
@@ -162,7 +177,82 @@ ulimit -n 65535;
         stop_container: bool = True,
     ) -> OutputTests:
         """Run tests inside the Docker container."""
+
         volumes = self._setup_container_volumes(workdir="/run_dir")
+        self.start_container(
+            image_name=self.image_name,
+            container_name=self.container_name,
+            volumes=volumes,
+            working_dir="/run_dir",
+        )
+
+        command = self._mock_path(command)
+        
+        try:
+            self.evaluation_time = time.time()
+            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
+        except TimeOutException:
+            logger.error("Timeout exception during test execution")
+            self.return_code = 2
+            self.stderr = b"Timeout exception"
+        finally:
+            self.evaluation_time = time.time() - self.evaluation_time
+            self._convert_std_from_bytes_to_str()
+        pytest_json = {}
+        fn_json_result = os.path.join(self.cache_folder, "report_pytest.json")
+
+        if os.path.exists(fn_json_result):
+            try:
+                with open(fn_json_result, "r") as f:
+                    pytest_json = json.load(f)
+            except json.JSONDecodeError:
+                logger.warning(
+                    f"Failed to parse JSON report at {fn_json_result}")
+
+        if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
+            self.stop_container()
+
+        return self._format_results(pytest_json=pytest_json, is_build=False)
+
+    def cp_testbed_rundir(self):
+        """This change owner of run folder to root"""
+        logger.info("Creating duplicate with all binaries /run_dir -> /testbed")
+        volumes = self._setup_container_volumes(workdir="/run_dir/")
+        self.start_container(
+            image_name=self.image_name,
+            container_name=self.container_name,
+            volumes=volumes,
+            working_dir="/run_dir",
+        )
+        
+        create_folder_cmd = "rm -rf /run_dir/*;cp -r /testbed/* /run_dir/"
+        self.timeout_exec_run(f"bash -c '{create_folder_cmd}'", timeout=5)
+        self.stop_container()
+
+    def run_testbed(
+        self,
+        patch: str,
+        command: str = "pytest --json-report --json-report-file=report_pytest.json",
+        timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
+        stop_container: bool = True,
+    ) -> OutputTests:
+        """Run tests inside the Docker container from /testbed directory with patch applied."""
+        
+
+        # rm -rf /run_dir cp -r /testbed /run_dir
+        self.cp_testbed_rundir()
+
+        # Apply patch to cache_folder before starting container
+        if patch and patch.strip():
+            logger.info("Applying patch to repository")
+            try:
+                self.apply_patch_alpine_container(patch)
+                logger.info("Patch applied successfully")
+            except Exception as e:
+                logger.error(f"Failed to apply patch: {e}")
+                raise GitPatchFailed(f"Failed to apply patch: {e}") from e
+        
+        volumes = self._setup_container_volumes(workdir="/run_dir/")
         self.start_container(
             image_name=self.image_name,
             container_name=self.container_name,
@@ -217,10 +307,9 @@ ulimit -n 65535;
             summary_dict = parser['summary']
 
         n_passed = (summary_dict.get('passed', 0) + summary_dict.get('xpassed', 0))
-        n_failed = (summary_dict.get('error', 0) +\
-                    summary_dict.get('failed', 0) +\
-                    summary_dict.get('xfailed', 0)
-                   )
+        n_failed = (summary_dict.get('error', 0) +
+                    summary_dict.get('failed', 0) +
+                    summary_dict.get('xfailed', 0))
         n_error = summary_dict.get('error', 0)
 
         if (n_passed > 0) and (n_failed == 0):
