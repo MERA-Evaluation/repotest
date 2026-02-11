@@ -147,6 +147,7 @@ class AbstractDockerRepo(AbstractRepo):
         command="/bin/bash",  # Start a shell session initially
         remove=True,
         working_dir=None,
+        user = None
     ):
         try:
             if self.cache_folder not in volumes:
@@ -164,7 +165,8 @@ class AbstractDockerRepo(AbstractRepo):
                                                                remove={remove},
                                                                mem_limit={self.MEM_LIMIT},  # Limit container memory to 10GB
                                                                environment="PIP_ROOT_USER_ACTION": "ignore",
-                                                               cpus={self.RANDOM_CONTAINER_CPUS_CPUS}                     
+                                                               cpus={self.RANDOM_CONTAINER_CPUS_CPUS},
+                                                               user={user}               
                                                               )"""
             )
 
@@ -186,6 +188,7 @@ class AbstractDockerRepo(AbstractRepo):
                     "PYTHONUNBUFFERED": "1",
                 },
                 cpuset_cpus=self.RANDOM_CONTAINER_CPUS_CPUS,
+                **({'user': user} if user else {})
             )
         except APIError as e:
             logger.warning("start_container fail, try again")

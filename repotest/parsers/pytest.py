@@ -1,11 +1,23 @@
 import re
 from typing import Any, Dict
-
+import os
+import json
+from repotest.logger import logger
 
 def parse_single(s: str) -> int:
     """Extracts integer from a string like '3 failed'."""
     return int(s.split(" ")[0])
 
+def parse_pytest_report(fn_json_result):
+    if os.path.exists(fn_json_result):
+        try:
+            with open(fn_json_result, "r") as f:
+                pytest_json = json.load(f)
+            return pytest_json
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse JSON report at %s", fn_json_result)
+    logger.debug("File %s is not exist", fn_json_result)
+    return {}
 
 def parse_pytest_stdout(s: str) -> Dict[str, Any]:
     """Parses pytest stdout into a structured JSON format."""

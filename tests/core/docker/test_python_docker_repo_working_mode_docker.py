@@ -9,6 +9,7 @@ def repo_and_build_env(request):
         repo="niklashenning/pytablericons",
         base_commit="29f2138c6399c04b4a0818503995b35627aaa754",
         cache_mode=request.param,
+        working_mode='docker'
     )
     repo_instance.clean()
     build_env_result = repo_instance.build_env()

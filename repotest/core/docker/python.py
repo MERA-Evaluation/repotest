@@ -11,7 +11,7 @@ from repotest.constants import (DEFAULT_BUILD_TIMEOUT_INT,
                                 DOCKER_PYTHON_DEFAULT_IMAGE)
 from repotest.core.docker.base import AbstractDockerRepo
 from repotest.core.exceptions import TimeOutException, GitPatchFailed
-from repotest.parsers.python.pytest_stdout import parse_pytest_stdout
+from repotest.parsers.pytest import parse_pytest_stdout, parse_pytest_report
 from repotest.core.types import CacheMode, OutputBuildEnv, OutputTests, OutputSummary
 
 logger = logging.getLogger("repotest")
@@ -19,6 +19,69 @@ logger = logging.getLogger("repotest")
 
 class PythonDockerRepo(AbstractDockerRepo):
     """A class for managing and testing Python repositories in a Docker container."""
+    IMAGE_USER = None
+
+    def parse_stdout(self):
+        return parse_pytest_stdout(self.stdout)
+    
+    def parse_report(self):
+        pytest_json = parse_pytest_report(fn_json_result=os.path.join(self.cache_folder,
+                                                                      "report_pytest.json"
+                                                                     )
+                                         )
+        return pytest_json
+
+    def get_output_test_result(self, is_build=False) -> OutputBuildEnv | OutputTests:
+        """Format results into a consistent dictionary structure."""
+        if is_build:
+            OutputClass = OutputBuildEnv
+        else:
+            OutputClass = OutputTests
+
+        pytest_json = self.parse_report()
+        parser = self.parse_stdout()
+        #ToDo: add django stdout
+        
+        if pytest_json and ('summary' in pytest_json):
+            _from = 'report.json'
+            summary_dict = pytest_json['summary']
+        else:
+            _from = 'stdout'
+            summary_dict = parser['summary']
+
+        n_passed = (summary_dict.get('passed', 0) + summary_dict.get('xpassed', 0))
+        n_failed = (summary_dict.get('error', 0) +
+                    summary_dict.get('failed', 0) +
+                    summary_dict.get('xfailed', 0))
+        n_error = summary_dict.get('error', 0)
+
+        if (n_passed > 0) and (n_failed == 0):
+            status = "Ok"
+        elif (n_passed == 0):
+            status = "Fail"
+        else:
+            status = 'Unknown'
+
+        summary = OutputSummary(status=status,
+                                passed=n_passed,
+                                failed=n_failed,
+                                total=n_passed + n_failed,
+                                error=n_error,
+                                collected=summary_dict.get("collected", -1),
+                                _from=_from
+                                )
+
+        return OutputClass(stdout=self.stdout,
+                           stderr=self.stderr,
+                           std=self.std,
+                           returncode=self.return_code,
+                           parser=parser,
+                           report=pytest_json or {},
+                           time=self.evaluation_time,
+                           run_id=self.run_id,
+                           summary=summary
+                           )
+
 
     def __init__(
         self,
@@ -40,7 +103,10 @@ class PythonDockerRepo(AbstractDockerRepo):
         )
         self.working_mode = working_mode
         if self.working_mode == 'docker':
+            # Подменим /test_bed -> /run_dr
             self.cp_testbed_rundir()
+            # Поскольку мы сделали это в докере теперь операция apply_patch 
+            # через alpine container
             self.apply_patch = self.apply_patch_alpine_container
         elif self.working_mode == 'repo':
             pass
@@ -88,7 +154,8 @@ class PythonDockerRepo(AbstractDockerRepo):
         """Build the environment inside the Docker container."""
         self.container_name = self.default_container_name
         volumes = self._setup_container_volumes(
-            workdir="/run_dir")  # build_dir')
+            workdir="/run_dir"
+        )
 
         logger.info(
             "Starting container",
@@ -103,7 +170,8 @@ class PythonDockerRepo(AbstractDockerRepo):
             image_name=self.image_name,
             container_name=self.container_name,
             volumes=volumes,
-            working_dir="/run_dir",  # build_dir'
+            working_dir="/run_dir",  # build_dir',
+            user=self.IMAGE_USER
         )
         command = "ulimit -n 65535;\n" + command
         try:
@@ -135,28 +203,10 @@ class PythonDockerRepo(AbstractDockerRepo):
 
         if stop_container:
             self.stop_container()
+        else:
+            logger.critical(f"Connect to container: \n`docker exec -it {self.container_name} bash`")
 
-        return self._format_results(is_build=True)
-
-    # ToDo: remove this is not good abstraction
-    def __call__(
-        self,
-        command_build: str,
-        command_test: str,
-        image_name_from: str = DOCKER_PYTHON_DEFAULT_IMAGE,
-        timeout_build: int = DEFAULT_BUILD_TIMEOUT_INT,
-        timeout_test: int = DEFAULT_EVAL_TIMEOUT_INT,
-    ) -> Dict[str, object]:
-        # ToDo: delete __call__ everywhere, it was a bad desicion nnot transparent
-        """Run build and test commands in sequence."""
-        if not self.was_build:
-            logger.debug(f"Building image from {self.default_image_name}")
-            self.build_env(command=command_build, timeout=timeout_build)
-        elif self.image_name != self.default_image_name:
-            self.image_name = self.default_image_name
-
-        logger.info("Starting test execution")
-        return self.run_test(command=command_test, timeout=timeout_test)
+        return self.get_output_test_result(is_build=True)
 
     def _mock_path(self, command: str) -> str:
         """Ensure PATH and PYTHONPATH are set correctly."""
@@ -177,13 +227,18 @@ ulimit -n 65535;
         stop_container: bool = True,
     ) -> OutputTests:
         """Run tests inside the Docker container."""
-
+        
+        # If we run tests several times better to clean up
+        if self._FALL_WITH_TIMEOUT_EXCEPTION:
+            self._FALL_WITH_TIMEOUT_EXCEPTION = False
+        
         volumes = self._setup_container_volumes(workdir="/run_dir")
         self.start_container(
             image_name=self.image_name,
             container_name=self.container_name,
             volumes=volumes,
             working_dir="/run_dir",
+            user=self.IMAGE_USER
         )
 
         command = self._mock_path(command)
@@ -198,21 +253,13 @@ ulimit -n 65535;
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
-        pytest_json = {}
-        fn_json_result = os.path.join(self.cache_folder, "report_pytest.json")
-
-        if os.path.exists(fn_json_result):
-            try:
-                with open(fn_json_result, "r") as f:
-                    pytest_json = json.load(f)
-            except json.JSONDecodeError:
-                logger.warning(
-                    f"Failed to parse JSON report at {fn_json_result}")
-
-        if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
+        
+        if stop_container:# and not self._FALL_WITH_TIMEOUT_EXCEPTION:
             self.stop_container()
+        else:
+            logger.critical(f"Connect to container: \n`docker exec -it {self.container_name} bash`")
 
-        return self._format_results(pytest_json=pytest_json, is_build=False)
+        return self.get_output_test_result(is_build=False)
 
     def cp_testbed_rundir(self):
         """This change owner of run folder to root"""
@@ -223,6 +270,7 @@ ulimit -n 65535;
             container_name=self.container_name,
             volumes=volumes,
             working_dir="/run_dir",
+            user=self.IMAGE_USER
         )
         
         create_folder_cmd = "rm -rf /run_dir/*;cp -r /testbed/* /run_dir/"
@@ -272,69 +320,6 @@ ulimit -n 65535;
         finally:
             self.evaluation_time = time.time() - self.evaluation_time
             self._convert_std_from_bytes_to_str()
-        pytest_json = {}
-        fn_json_result = os.path.join(self.cache_folder, "report_pytest.json")
+        
+        return self.get_output_test_result(is_build=False)
 
-        if os.path.exists(fn_json_result):
-            try:
-                with open(fn_json_result, "r") as f:
-                    pytest_json = json.load(f)
-            except json.JSONDecodeError:
-                logger.warning(
-                    f"Failed to parse JSON report at {fn_json_result}")
-
-        if stop_container and not self._FALL_WITH_TIMEOUT_EXCEPTION:
-            self.stop_container()
-
-        return self._format_results(pytest_json=pytest_json, is_build=False)
-
-    def _format_results(self, pytest_json: Optional[Dict] = None, is_build=False) -> OutputBuildEnv | OutputTests:
-        """Format results into a consistent dictionary structure."""
-        if is_build:
-            OutputClass = OutputBuildEnv
-        else:
-            OutputClass = OutputTests
-
-        parser = parse_pytest_stdout(self.stdout)
-
-        # ToDo: move in abstract class
-        # ToDo: types are simmilar for docker and local implementations
-        if pytest_json and ('summary' in pytest_json):
-            _from = 'report.json'
-            summary_dict = pytest_json['summary']
-        else:
-            _from = 'stdout'
-            summary_dict = parser['summary']
-
-        n_passed = (summary_dict.get('passed', 0) + summary_dict.get('xpassed', 0))
-        n_failed = (summary_dict.get('error', 0) +
-                    summary_dict.get('failed', 0) +
-                    summary_dict.get('xfailed', 0))
-        n_error = summary_dict.get('error', 0)
-
-        if (n_passed > 0) and (n_failed == 0):
-            status = "Ok"
-        elif (n_passed == 0):
-            status = "Fail"
-        else:
-            status = 'Unknown'
-
-        summary = OutputSummary(status=status,
-                                passed=n_passed,
-                                failed=n_failed,
-                                total=n_passed + n_failed,
-                                error=n_error,
-                                collected=summary_dict.get("collected", -1),
-                                _from=_from
-                                )
-
-        return OutputClass(stdout=self.stdout,
-                           stderr=self.stderr,
-                           std=self.std,
-                           returncode=self.return_code,
-                           parser=parse_pytest_stdout(self.stdout),
-                           report=pytest_json or {},
-                           time=self.evaluation_time,
-                           run_id=self.run_id,
-                           summary=summary
-                           )

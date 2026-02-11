@@ -7,7 +7,7 @@ from repotest.constants import (CONDA_ENV_NAME, DEFAULT_BUILD_TIMEOUT_INT,
                                 DEFAULT_CACHE_FOLDER, DEFAULT_EVAL_TIMEOUT_INT)
 from repotest.core.exceptions import TimeOutException
 from repotest.core.local.base import AbstractLocalRepo
-from repotest.parsers.python.pytest_stdout import parse_pytest_stdout
+from repotest.parsers.pytest import parse_pytest_stdout
 
 logger = logging.getLogger("repotest")
 
