@@ -282,7 +282,7 @@ class AbstractDockerRepo(AbstractRepo):
             # ToDo change this, when Exception type will be more precise
             raise e
 
-    def timeout_exec_run(self, command, timeout):
+    def timeout_exec_run(self, command, timeout, save_std = True):
         """
         Execute a command inside a Docker container with a timeout.
         """
@@ -293,21 +293,26 @@ class AbstractDockerRepo(AbstractRepo):
             _, self.last_stream = self.container.exec_run(
                 command, stream=True, tty=False, stdout=True, stderr=True, demux=True
             )
-            self.return_code = 0
-            self.stdout = b""
-            self.stderr = b""
-            self.std = b""
+
+            if save_std:
+                self.return_code = 0
+                self.stdout = b""
+                self.stderr = b""
+                self.std = b""
+
 
             for stdout, stderr in self.last_stream:
                 if stdout:
                     logger.debug(self._bytes_to_string(stdout))
-                    self.stdout += stdout
-                    self.std += stdout
+                    if save_std:
+                        self.stdout += stdout
+                        self.std += stdout
                 if stderr:
                     logger.warning(self._bytes_to_string(stderr))
-                    self.return_code = 1
-                    self.stderr += stderr
-                    self.std += stderr
+                    if save_std:
+                        self.return_code = 1
+                        self.stderr += stderr
+                        self.std += stderr
             return
 
         logger.info(f"timeout seconds={timeout}")
@@ -323,39 +328,7 @@ class AbstractDockerRepo(AbstractRepo):
                 raise TimeOutException(
                     f"Command execution(docker) timed out after {timeout} seconds."
                 ) from e
-
-    # @timeout_decorator()
-    # def timeout_exec_run_old(self, command):
-    #     """
-    #     Execute a command inside a Docker container.
-    #     """
-    #     logger.debug(f"Executing command in Docker container: {command}")
-
-    #     _, self.last_stream = self.container.exec_run(command,
-    #                                                   stream = True,
-    #                                                   tty=False,
-    #                                                   stdout=True,
-    #                                                   stderr=True,
-    #                                                   demux=True
-    #                                                  )
-    #     self.return_code = 0
-    #     self.stdout = b''
-    #     self.stderr = b''
-    #     self.std = b''
-
-    #     for stdout, stderr in self.last_stream:
-    #         if stdout:
-    #             logger.debug(self._bytes_to_string(stdout))
-    #             self.stdout += stdout
-    #             self.std += stdout
-    #         if stderr:
-    #             logger.warning(self._bytes_to_string(stderr))
-    #             #ToDo: check that this return_code works
-    #             self.return_code = 1
-    #             self.stderr += stderr
-    #             self.std += stderr
-    #     return
-
+    
     def create_volume(self, volume_name):
         try:
             volume = self.docker_client.volumes.get(volume_name)
@@ -585,3 +558,53 @@ class AbstractDockerRepo(AbstractRepo):
             logger.critical(e, exc_info=True)
             raise GitPatchFailed("patch not working") from e
 
+    def _half_apply_patch_alpine_container(self, patch: str) -> str:
+        """Apply patch partially using Alpine container, skipping failing blocks.
+        
+        Uses a single container to try each block, avoiding the 2-3s overhead per block.
+        """
+        block_list = self._AbstractRepo__get_block_list(patch)
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Write each block as a separate numbered patch file
+            for i, block in enumerate(block_list):
+                with open(os.path.join(temp_dir, f"patch_{i:04d}.diff"), "w") as f:
+                    f.write(block)
+            
+            volumes = {
+                temp_dir: {"bind": "/patches", "mode": "ro"},
+                self.cache_folder: {"bind": "/run_dir", "mode": "rw"}
+            }
+            
+            # Single container: loop through each patch, try to apply, report OK/FAIL
+            cmd = ('cd /run_dir && for f in $(ls /patches/patch_*.diff | sort); do '
+                'if git apply "$f" 2>/dev/null; then '
+                'echo "OK:$(basename $f)"; '
+                'else echo "FAIL:$(basename $f)"; fi; done')
+            
+            result = self.docker_client.containers.run(
+                image="alpine/git:latest",
+                entrypoint="sh",
+                command=["-c", cmd],
+                working_dir="/run_dir",
+                volumes=volumes,
+                remove=True,
+                mem_limit=self.MEM_LIMIT,
+            )
+            
+            # Parse results to find which blocks succeeded
+            output = result.decode('utf-8')
+            new_block_list = []
+            bad_index = []
+            for line in output.strip().split('\n'):
+                if ':' not in line:
+                    continue
+                status, filename = line.split(":", 1)
+                idx = int(filename.replace("patch_", "").replace(".diff", ""))
+                if status == "OK":
+                    new_block_list.append(block_list[idx])
+                else:
+                    bad_index.append(idx)
+            
+            logger.critical(f"drop indexes: {bad_index}")
+            return ''.join(new_block_list)

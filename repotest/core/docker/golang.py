@@ -18,16 +18,17 @@ logger = logging.getLogger("repotest")
 class GoLangDockerRepo(PythonDockerRepo):
     """A class for managing and testing Python repositories in a Docker container."""
     IMAGE_USER = 'root' # ToDo: disable this quick fix this shuld be done at image
+    report_filename = 'junit.xml'
 
     def parse_stdout(self):
         return parse_junit_stdout(self.stdout)
     
     def parse_report(self):
-        pytest_json = parse_junit_report(fn_xml_result=os.path.join(self.cache_folder,
+        report = parse_junit_report(fn_xml_result=os.path.join(self.cache_folder,
                                                                     "junit.xml"
                                                                     )
                                         )
-        return pytest_json
+        return report
 
     def __init__(
             self,

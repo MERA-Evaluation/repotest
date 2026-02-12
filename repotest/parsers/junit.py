@@ -96,10 +96,11 @@ def parse_junit_report(fn_xml_result):
         return {}
      
     # Add summary field same as at pytest   
-    n_total = int(report.get('testsuites', {}).get('@tests', 0))
+    n_passed = int(report.get('testsuites', {}).get('@tests', 0))
     n_failures = int(report.get('testsuites', {}).get('@failures', 0))
     n_errors = int(report.get('testsuites', {}).get('@errors', 0))
-
+    n_total =  n_passed + n_failures + n_errors
+    
     if report:
         try:
             passed_test, failed_test, all_test = get_failed_passed_tests(report)
@@ -110,7 +111,7 @@ def parse_junit_report(fn_xml_result):
 
     report['summary'] = {
                 'total': n_total,
-                'passed': n_total - n_failures - n_errors,
+                'passed': n_passed,
                 'failed': n_failures,
                 'error': n_errors,
                 'xpassed': 0,

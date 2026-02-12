@@ -20,13 +20,13 @@ logger = logging.getLogger("repotest")
 class PythonDockerRepo(AbstractDockerRepo):
     """A class for managing and testing Python repositories in a Docker container."""
     IMAGE_USER = None
-
+    report_filename = "report_pytest.json"
     def parse_stdout(self):
         return parse_pytest_stdout(self.stdout)
     
     def parse_report(self):
         pytest_json = parse_pytest_report(fn_json_result=os.path.join(self.cache_folder,
-                                                                      "report_pytest.json"
+                                                                      self.report_filename
                                                                      )
                                          )
         return pytest_json
@@ -38,13 +38,13 @@ class PythonDockerRepo(AbstractDockerRepo):
         else:
             OutputClass = OutputTests
 
-        pytest_json = self.parse_report()
+        report = self.parse_report()
         parser = self.parse_stdout()
         #ToDo: add django stdout
         
-        if pytest_json and ('summary' in pytest_json):
-            _from = 'report.json'
-            summary_dict = pytest_json['summary']
+        if report and ('summary' in report):
+            _from = self.report_filename
+            summary_dict = report['summary']
         else:
             _from = 'stdout'
             summary_dict = parser['summary']
@@ -76,7 +76,7 @@ class PythonDockerRepo(AbstractDockerRepo):
                            std=self.std,
                            returncode=self.return_code,
                            parser=parser,
-                           report=pytest_json or {},
+                           report=report,
                            time=self.evaluation_time,
                            run_id=self.run_id,
                            summary=summary
@@ -108,6 +108,7 @@ class PythonDockerRepo(AbstractDockerRepo):
             # Поскольку мы сделали это в докере теперь операция apply_patch 
             # через alpine container
             self.apply_patch = self.apply_patch_alpine_container
+            self._half_apply_patch = self._half_apply_patch_alpine_container
         elif self.working_mode == 'repo':
             pass
         else:
@@ -210,9 +211,9 @@ class PythonDockerRepo(AbstractDockerRepo):
 
     def _mock_path(self, command: str) -> str:
         """Ensure PATH and PYTHONPATH are set correctly."""
-        prefix = """export PYTHONPATH=.;
+        prefix = f"""export PYTHONPATH=.;
 export PATH=$PYTHONPATH:$PATH;
-echo "">report_pytest.json;
+echo "">{self.report_filename};
 ulimit -n 65535;
 """
         # For simplicity we are working in mount directory
@@ -273,53 +274,53 @@ ulimit -n 65535;
             user=self.IMAGE_USER
         )
         
-        create_folder_cmd = "rm -rf /run_dir/*;cp -r /testbed/* /run_dir/"
+        create_folder_cmd  = "if [ -d /testbed ]; then rm -rf /run_dir/*; cp -r /testbed/* /run_dir/; else echo 'No /testbed found, skipping'; fi"
         self.timeout_exec_run(f"bash -c '{create_folder_cmd}'", timeout=5)
         self.stop_container()
 
-    def run_testbed(
-        self,
-        patch: str,
-        command: str = "pytest --json-report --json-report-file=report_pytest.json",
-        timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
-        stop_container: bool = True,
-    ) -> OutputTests:
-        """Run tests inside the Docker container from /testbed directory with patch applied."""
+    # def run_testbed(
+    #     self,
+    #     patch: str,
+    #     command: str = "pytest --json-report --json-report-file=report_pytest.json",
+    #     timeout: int = DEFAULT_EVAL_TIMEOUT_INT,
+    #     stop_container: bool = True,
+    # ) -> OutputTests:
+    #     """Run tests inside the Docker container from /testbed directory with patch applied."""
         
 
-        # rm -rf /run_dir cp -r /testbed /run_dir
-        self.cp_testbed_rundir()
+    #     # rm -rf /run_dir cp -r /testbed /run_dir
+    #     self.cp_testbed_rundir()
 
-        # Apply patch to cache_folder before starting container
-        if patch and patch.strip():
-            logger.info("Applying patch to repository")
-            try:
-                self.apply_patch_alpine_container(patch)
-                logger.info("Patch applied successfully")
-            except Exception as e:
-                logger.error(f"Failed to apply patch: {e}")
-                raise GitPatchFailed(f"Failed to apply patch: {e}") from e
+    #     # Apply patch to cache_folder before starting container
+    #     if patch and patch.strip():
+    #         logger.info("Applying patch to repository")
+    #         try:
+    #             self.apply_patch_alpine_container(patch)
+    #             logger.info("Patch applied successfully")
+    #         except Exception as e:
+    #             logger.error(f"Failed to apply patch: {e}")
+    #             raise GitPatchFailed(f"Failed to apply patch: {e}") from e
         
-        volumes = self._setup_container_volumes(workdir="/run_dir/")
-        self.start_container(
-            image_name=self.image_name,
-            container_name=self.container_name,
-            volumes=volumes,
-            working_dir="/run_dir",
-        )
+    #     volumes = self._setup_container_volumes(workdir="/run_dir/")
+    #     self.start_container(
+    #         image_name=self.image_name,
+    #         container_name=self.container_name,
+    #         volumes=volumes,
+    #         working_dir="/run_dir",
+    #     )
 
-        command = self._mock_path(command)
+    #     command = self._mock_path(command)
 
-        try:
-            self.evaluation_time = time.time()
-            self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
-        except TimeOutException:
-            logger.error("Timeout exception during test execution")
-            self.return_code = 2
-            self.stderr = b"Timeout exception"
-        finally:
-            self.evaluation_time = time.time() - self.evaluation_time
-            self._convert_std_from_bytes_to_str()
+    #     try:
+    #         self.evaluation_time = time.time()
+    #         self.timeout_exec_run(f"bash -c '{command}'", timeout=timeout)
+    #     except TimeOutException:
+    #         logger.error("Timeout exception during test execution")
+    #         self.return_code = 2
+    #         self.stderr = b"Timeout exception"
+    #     finally:
+    #         self.evaluation_time = time.time() - self.evaluation_time
+    #         self._convert_std_from_bytes_to_str()
         
-        return self.get_output_test_result(is_build=False)
+    #     return self.get_output_test_result(is_build=False)
 
